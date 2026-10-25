@@ -165,4 +165,5 @@ export interface AgentEngine {
   }): Promise<{ readonly runId: RunId; readonly done: Promise<void> }>;
   interrupt(runId: RunId): Promise<void>;
   getState(runId: RunId): RunState | undefined;
+  onEvent(threadId: string, listener: (event: AgentEvent) => void): () => void;
 }
