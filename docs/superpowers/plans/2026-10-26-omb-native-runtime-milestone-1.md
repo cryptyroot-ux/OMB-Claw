@@ -124,7 +124,6 @@ Commit with `feat: persist native agent run and call state`.
 
 **Files:**
 - Modify: `server/agent-runtime/model-adapter.ts`
-- Modify: `server/drivers/openai-chat.ts`
 - Create: `server/agent-runtime/model-adapter.test.ts`
 - Test: `server/drivers/openai-chat-protocol.test.ts`
 
@@ -132,25 +131,25 @@ Commit with `feat: persist native agent run and call state`.
 - Consumes: Task 1 `ModelEvent`, `ModelCapabilities`, and `ModelAdapter` contracts.
 - Produces: `createOpenAICompatibleModelAdapter(config): ModelAdapter`, where `config` contains `providerId`, base `apiUrl`, in-memory `apiKey`, current `ModelCatalog`, per-model `capabilities(modelId)`, optional `requestBody(model, messages, stream)` customization, and optional injected `fetcher`. It handles `/chat/completions` JSON and SSE formats.
 
-- [ ] **Step 1: Write failing local-HTTP adapter tests**
+- [x] **Step 1: Write failing local-HTTP adapter tests**
 
-Add tests named `maps_json_tool_completion_to_normalized_events`, `maps_sse_deltas_usage_and_tool_calls`, `classifies_429_and_5xx_as_transient_before_output`, `classifies_invalid_request_as_non_retryable`, `rejects_unknown_capabilities_without_advertising_tools`, and `aborts_fetch_when_signal_is_cancelled`. Use a loopback HTTP fixture and an injected `fetch` implementation where required.
+Add tests named `maps a JSON tool completion to normalized events`, `maps SSE deltas, usage, and fragmented tool calls`, `classifies 429 and 5xx as transient before output`, `classifies an invalid request as non-retryable`, `reports unknown capabilities without guessing`, and `aborts fetch when the signal is cancelled`. Use a loopback HTTP fixture and an injected `fetch` implementation where required.
 
-- [ ] **Step 2: Run the focused adapter tests and confirm RED**
+- [x] **Step 2: Run the focused adapter tests and confirm RED**
 
 Run: `pnpm vitest run server/agent-runtime/model-adapter.test.ts`
-Expected: current stub response fails the scripted request/response assertions.
+Expected: the current stub response fails the scripted request/response assertions.
 
-- [ ] **Step 3: Extract Chat Completions transport into the adapter**
+- [x] **Step 3: Extract Chat Completions transport into the adapter**
 
-Move only protocol responsibilities—request encoding, JSON/SSE parsing, usage, aborts, and error classification—behind the adapter. Keep task state and capability execution in `AgentEngine`. Read API credentials from the existing provider instance environment in memory; never log or persist their values. Populate per-model capabilities from trustworthy provider metadata, a versioned manifest, or explicit test/operator profiles; leave unsupported evidence as `unknown`.
+Implement the adapter as a standalone Chat Completions transport. Do not alter the legacy `openai-chat.ts` loop in this milestone; the native ProviderAdapter path in Task 5 calls the new adapter directly. Read API credentials from the existing provider instance environment in memory; never log or persist their values. Populate per-model capabilities from trustworthy provider metadata, a versioned manifest, or explicit test/operator profiles; leave unsupported evidence as `unknown`.
 
-- [ ] **Step 4: Run adapter and protocol tests**
+- [x] **Step 4: Run adapter and protocol tests**
 
-Run: `pnpm vitest run server/agent-runtime/model-adapter.test.ts server/drivers/openai-chat-protocol.test.ts`
+Run: `pnpm vitest run server/agent-runtime/ server/drivers/openai-chat-protocol.test.ts`
 Expected: all selected adapter and existing protocol tests pass with no external network access.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit with `feat: add OpenAI-compatible model adapter`.
 
