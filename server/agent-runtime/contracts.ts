@@ -85,7 +85,7 @@ export type ModelEvent =
   | { readonly type: "usage"; readonly input: number; readonly output: number; readonly cachedInput?: number; readonly costUsd?: number }
   | { readonly type: "completed"; readonly finishReason: string | null };
 
-export type ModelAdapterErrorCode = "transient" | "unsupported_capability" | "invalid_request" | "terminal";
+export type ModelAdapterErrorCode = "transient" | "unsupported_capability" | "unsupported_tools" | "invalid_request" | "terminal";
 
 export interface ModelAdapterError extends Error {
   readonly code: ModelAdapterErrorCode;
@@ -121,6 +121,8 @@ export interface CapabilityDescriptor {
   readonly risk: "read" | "write" | "destructive";
   readonly sideEffect: boolean;
   readonly timeoutMs: number;
+  /** A tool the engine may drop when a provider rejects the whole tools parameter (e.g. the built-in question tool). */
+  readonly optional?: boolean;
 }
 
 export interface CapabilityCall {

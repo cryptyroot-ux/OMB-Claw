@@ -91,7 +91,9 @@ export function createChatCapabilitySession({
   return {
     list(grant: CapabilityGrant): ReadonlyArray<CapabilityDescriptor> {
       if (closed) return [];
-      return Array.from(descriptors.values()).filter((item) => permitted(item.id, grant));
+      return Array.from(descriptors.values())
+        .filter((item) => permitted(item.id, grant))
+        .map((item) => item.id === ASK_USER_TOOL ? { ...item, optional: true } : item);
     },
 
     validate(call: CapabilityCall, grant: CapabilityGrant): void {

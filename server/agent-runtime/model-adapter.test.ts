@@ -265,6 +265,29 @@ describe("createOpenAICompatibleModelAdapter", () => {
     expect(error).toMatchObject({ code: "invalid_request", retryable: false, retrySafe: false, requestStarted: false });
   });
 
+  it("classifies a provider that rejects the tools parameter", async () => {
+    const f = await fixture((_request, response) => json(response, {
+      error: { message: "tools are not supported", param: "tools", code: "unsupported_parameter" },
+    }, 400));
+    const error = await failure(adapter(f.origin).generate({
+      messages: [{ role: "user", content: "hello" }],
+      model: "fixture-model",
+      tools: [{
+        id: "read_file",
+        name: "read_file",
+        description: "Read a file",
+        schema: { type: "object" },
+        risk: "read",
+        sideEffect: false,
+        timeoutMs: 5_000,
+      }],
+      signal: new AbortController().signal,
+    }));
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toMatchObject({ code: "unsupported_tools", retryable: false, retrySafe: false, requestStarted: false });
+  });
+
   it("suppresses reasoning unless the adapter enables it", async () => {
     const f = await fixture((_request, response) => {
       sse(response, [

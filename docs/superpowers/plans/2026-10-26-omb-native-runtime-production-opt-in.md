@@ -69,6 +69,7 @@
 - [x] Merge upstream `origin/main` at `83f4b19bf` (143 commits) into the native branch; resolve the `openai-chat.ts` turn-entry conflict by keeping both `native` and `ending`.
 - [x] Add `nudgeAnnouncedAction` parity to the native loop, sharing `announcesAction` through `server/agent-runtime/announcement.ts`.
 - [x] Add native steering: `AgentEngine.steer(runId, text)` queues a user correction for the next model round, never mid-tool-batch, and refuses only after the run stops taking rounds. The driver forwards `steer(threadId)` to the live run and queues text that arrives before the run id exists.
+- [x] Add the optional-tool downgrade: a provider that rejects the whole `tools` parameter (400/422) gets one retry without tools when every offered tool is optional (the built-in question tool). Turns with a required tool fail closed.
 - [x] Make every API driver native: `openai-compat`, `grok`, `groq`, `meta`, `minimax`, `mistral`, `cerebras`; `server/drivers/native-engine.ts` builds their adapter/engine, and `server/index.ts` marks their turns with `agentEngine:"omb-native"`.
 - [x] Add multimodal input: neutral `ModelContentPart` (`text`/`image`), user image parts, and tool-result images returned to vision models. Text-only models still refuse tool images.
 - [x] Rewrite `server/openai-tools.e2e.test.ts` request scoping so a chief incident turn on the same loopback provider cannot change a scenario's counts; it passes for all three drivers.

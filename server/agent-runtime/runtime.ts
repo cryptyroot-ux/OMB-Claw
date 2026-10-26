@@ -36,7 +36,7 @@ class AgentRuntimeError extends Error {
 function isModelAdapterError(error: unknown): error is ModelAdapterError {
   if (!(error instanceof Error)) return false;
   const candidate = error as ModelAdapterError;
-  return ["transient", "unsupported_capability", "invalid_request", "terminal"].includes(candidate.code)
+  return ["transient", "unsupported_capability", "unsupported_tools", "invalid_request", "terminal"].includes(candidate.code)
     && typeof candidate.retryable === "boolean"
     && typeof candidate.retrySafe === "boolean"
     && typeof candidate.requestStarted === "boolean";
@@ -152,12 +152,13 @@ export function createAgentEngine(dependencies: {
 
           const adapter = dependencies.adapters.resolve(request.providerModel);
           const modelCapabilities = adapter.capabilities(request.providerModel.modelId);
+          let allowTools = true;
           while (modelRounds < MAX_MODEL_ROUNDS) {
             signal.throwIfAborted();
             if (control.steers.length) {
               for (const text of control.steers.splice(0)) messages.push({ role: "user", content: text });
             }
-            const toolDescriptors = request.capabilities.list(request.grant);
+            let toolDescriptors = allowTools ? request.capabilities.list(request.grant) : [];
             if (toolDescriptors.length > 0 && modelCapabilities.tools !== "supported") {
               throw new AgentRuntimeError("unsupported_capability", "The selected model is not verified for structured tool calls");
             }
@@ -209,6 +210,21 @@ export function createAgentEngine(dependencies: {
                 if (!sawCompletion) throw modelEventFailure("The model stream ended without a completion event");
                 break;
               } catch (error) {
+                if (
+                  isModelAdapterError(error)
+                  && error.code === "unsupported_tools"
+                  && allowTools
+                  && !outputVisible
+                  && !capabilityDispatched
+                  && !signal.aborted
+                ) {
+                  const offered = request.capabilities.list(request.grant);
+                  if (offered.length > 0 && offered.every((tool) => tool.optional === true)) {
+                    allowTools = false;
+                    toolDescriptors = [];
+                    continue;
+                  }
+                }
                 const canRetry = isModelAdapterError(error)
                   && error.code === "transient"
                   && error.retryable

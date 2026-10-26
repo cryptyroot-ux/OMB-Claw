@@ -637,6 +637,73 @@ describe("createAgentEngine", () => {
     expect(textOnly.requests).toHaveLength(1);
   });
 
+  it("retries once without tools when every offered tool is optional", async () => {
+    const requests: ModelGenerateRequest[] = [];
+    const modelAdapter: TestModelAdapter = {
+      ...testModelAdapter([]),
+      requests,
+      async *generate(request) {
+        requests.push(request);
+        if (requests.length === 1) {
+          throw new FixtureModelAdapterError("tools are not supported", "unsupported_tools", false, false, false);
+        }
+        yield { type: "content.delta", kind: "assistant_text", delta: "Answered without tools." };
+        yield { type: "completed", finishReason: "stop" };
+      },
+    };
+    const store = testRunStore();
+    const engine = createAgentEngine({ adapters: registryFor(modelAdapter), store });
+
+    const handle = await engine.run({
+      botId: "bot-1",
+      threadId: "thread-1",
+      text: "Say hello.",
+      messages: userMessages,
+      providerModel: { providerId: "fixture", modelId: "fixture-model" },
+      grant,
+      capabilities: testCapabilitySession([{ ...descriptor("read-a"), optional: true }]),
+      signal: new AbortController().signal,
+    });
+    await handle.done;
+
+    expect(requests).toHaveLength(2);
+    expect(requests[0]?.tools).toHaveLength(1);
+    expect(requests[1]?.tools).toHaveLength(0);
+    expect(store.getRun(handle.runId)).toMatchObject({ status: "completed", modelRounds: 2 });
+  });
+
+  it("fails instead of dropping a tool the turn needs", async () => {
+    const requests: ModelGenerateRequest[] = [];
+    const modelAdapter: TestModelAdapter = {
+      ...testModelAdapter([]),
+      requests,
+      async *generate(request) {
+        requests.push(request);
+        if (requests.length === 1) {
+          throw new FixtureModelAdapterError("tools are not supported", "unsupported_tools", false, false, false);
+        }
+        yield { type: "completed", finishReason: "stop" };
+      },
+    };
+    const store = testRunStore();
+    const engine = createAgentEngine({ adapters: registryFor(modelAdapter), store });
+
+    const handle = await engine.run({
+      botId: "bot-1",
+      threadId: "thread-1",
+      text: "Read the fixture.",
+      messages: userMessages,
+      providerModel: { providerId: "fixture", modelId: "fixture-model" },
+      grant,
+      capabilities: testCapabilitySession([descriptor("read-a")]),
+      signal: new AbortController().signal,
+    });
+    await handle.done;
+
+    expect(requests).toHaveLength(1);
+    expect(store.getRun(handle.runId)).toMatchObject({ status: "failed", failureCode: "unsupported_tools" });
+  });
+
   it("steers a running turn before the next round and refuses after it finishes", async () => {
     let entered!: () => void;
     const started = new Promise<void>((resolve) => { entered = resolve; });

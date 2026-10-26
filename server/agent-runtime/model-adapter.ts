@@ -10,6 +10,7 @@ import type {
   ModelMessage,
   ModelToolCall,
 } from "./contracts.ts";
+import { rejectsToolsParameter } from "../tool-rejection.ts";
 
 export interface OpenAICompatibleModelAdapterConfig {
   providerId: string;
@@ -262,14 +263,18 @@ export function createOpenAICompatibleModelAdapter(config: OpenAICompatibleModel
         }
 
         if (!response.ok) {
+          const detail = await response.text().catch(() => "");
           const transient = response.status === 408 || response.status === 429 || response.status >= 500;
-          const code: ModelAdapterErrorCode = transient
-            ? "transient"
-            : response.status === 400 || response.status === 422
-              ? "invalid_request"
-              : "terminal";
+          const toolsRejected = !transient && rejectsToolsParameter(response.status, detail);
+          const code: ModelAdapterErrorCode = toolsRejected
+            ? "unsupported_tools"
+            : transient
+              ? "transient"
+              : response.status === 400 || response.status === 422
+                ? "invalid_request"
+                : "terminal";
           throw new OpenAICompatibleAdapterError(
-            `Model provider returned HTTP ${response.status}`,
+            toolsRejected ? "The model provider does not support tools" : `Model provider returned HTTP ${response.status}`,
             code,
             transient,
             transient && !emitted,
