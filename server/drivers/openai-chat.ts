@@ -633,14 +633,12 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           const nativeText = typeof composed === "string"
             ? composed
             : composed.find((part) => part.type === "text")?.text ?? turn.text;
-          const nativeImages = turn.images?.length
-            ? (chatUserContent(turn) as ChatContentPart[])
-                .filter((part): part is ChatImagePart => part.type === "image_url")
-                .map((part) => {
-                  const match = /^data:([^;]+);base64,(.*)$/.exec(part.image_url.url);
-                  if (!match) throw new ChatProtocolError("The image transport is invalid; this turn was not sent.");
-                  return { mimeType: match[1]!, data: match[2]! };
-                })
+          const nativeImages = Array.isArray(composed)
+            ? composed.filter((part): part is ChatImagePart => part.type === "image_url").map((part) => {
+                const match = /^data:([^;]+);base64,(.*)$/.exec(part.image_url.url);
+                if (!match) throw new ChatProtocolError("The image transport is invalid; this turn was not sent.");
+                return { mimeType: match[1]!, data: match[2]! };
+              })
             : [];
 
           const parsed = parseToolScope(turn.toolScope);

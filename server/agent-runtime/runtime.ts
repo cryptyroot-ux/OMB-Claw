@@ -236,6 +236,7 @@ export function createAgentEngine(dependencies: {
 
               messages.push({ role: "assistant", content: responseText || null, toolCalls: responseCalls });
               emit(request.threadId, { type: "tool.calls", runId, calls: responseCalls });
+              const batchImages: ModelContentPart[] = [];
               for (const { call, descriptor } of batch) {
                 signal.throwIfAborted();
                 const dispatchedAt = Date.now();
@@ -289,15 +290,13 @@ export function createAgentEngine(dependencies: {
                   if (encodedImages > MAX_ENCODED_IMAGE_BYTES) {
                     throw new AgentRuntimeError("image_budget_exceeded", "Tool images exceeded the 32 MiB encoded budget for this run.");
                   }
-                  messages.push({
-                    role: "user",
-                    content: [
-                      { type: "text", text: `Screenshot result from tool call ${call.callId}:` },
-                      ...result.images.map((image): ModelContentPart => ({ type: "image", mimeType: image.mimeType, data: image.data })),
-                    ],
-                  });
+                  batchImages.push(
+                    { type: "text", text: `Screenshot result from tool call ${call.callId}:` },
+                    ...result.images.map((image): ModelContentPart => ({ type: "image", mimeType: image.mimeType, data: image.data })),
+                  );
                 }
               }
+              if (batchImages.length) messages.push({ role: "user", content: batchImages });
               continue;
             }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isExternalAgentEngine, supportedAgentDrivers } from "./engine-support.ts";
+import { isExternalAgentEngine, supportedAgentDrivers, usesNativeAgentEngine } from "./engine-support.ts";
 
 describe("engine support policy", () => {
   it("marks CLI and ACP agent engines as external", () => {
@@ -41,5 +41,13 @@ describe("engine support policy", () => {
     ];
 
     expect(supportedAgentDrivers(drivers).map((driver) => driver.driverKind)).toEqual(["openai-compat", "groq"]);
+  });
+
+  it("routes every registered API driver through the native engine", () => {
+    for (const kind of ["openai-compat", "grok", "groq", "meta", "minimax", "mistral", "cerebras"]) {
+      expect(usesNativeAgentEngine(kind), kind).toBe(true);
+    }
+    expect(usesNativeAgentEngine("claudeAgent")).toBe(false);
+    expect(usesNativeAgentEngine("unknown")).toBe(false);
   });
 });
