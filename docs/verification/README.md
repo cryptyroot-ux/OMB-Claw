@@ -1,5 +1,11 @@
 # Verifying OpenMausBot
 
+> Native-only build: the external CLI/ACP engines (Claude, Codex, OpenCode,
+> Hermes, Pi, Antigravity and the rest) are not registered here, so fixtures
+> that script `FAKE_CLAUDE_*` cannot drive a turn. Use the native
+> chat-completions fixtures instead: [OpenAI-compatible structured
+> tools](openai-tools.md) and [Chat UI](chat-ui.md#native-provider).
+
 OpenMausBot has one development control surface: `pnpm control:omb`. It runs
 the published `openmausbot` verbs (docs/headless-cli.md), which call the MCP
 tools in `scripts/mcp-server.ts`, so verification uses the same URL
@@ -18,13 +24,15 @@ Run the foreground launcher directly rather than through `pnpm`; this ensures
 it receives Ctrl-C and can stop its child before removing the temporary data.
 
 It gives the child a temporary data directory and home, chooses a free
-harness/webhook port pair, installs only the repository's fake engine, prints
-the URL, PID, data directory, and persistent log path, then stays attached to
-that exact child. The parent shell and the user's OpenMausBot data are
-untouched. Only `FAKE_CLAUDE_*` variables cross from the launcher's
-environment into that child, so a recipe can script the fake engine's mode,
-replies and tool calls without writing a wrapper CLI. Live calls add one
-exception: `OMB_OPENAI_LIVE_URL` crosses when it is a loopback
+harness/webhook port pair, installs the repository's fake engine binaries, and
+prints the URL, PID, data directory, and persistent log path, then stays
+attached to that exact child. In this native-only build the registry does not
+expose those engines; a native loopback provider is the supported way to drive
+a turn. The parent shell and the user's OpenMausBot data are untouched. Only
+`FAKE_CLAUDE_*` variables cross from the launcher's environment into that
+child, so a legacy recipe can still script its fake engine's mode, replies and
+tool calls without writing a wrapper CLI. Live calls add one exception:
+`OMB_OPENAI_LIVE_URL` crosses when it is a loopback
 `http://127.0.0.1:PORT` (the fake GPT-Live that
 `node --experimental-strip-types server/testing/fake-openai-live.ts` prints),
 and `OMB_OPENAI_LIVE_KEY` crosses only with it, so that key can only ever
