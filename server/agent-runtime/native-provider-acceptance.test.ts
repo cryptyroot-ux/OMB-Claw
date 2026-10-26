@@ -281,11 +281,6 @@ describe("native ProviderAdapter acceptance", () => {
     runtime.adapter.onEvent((event) => {
       if (event.type === "runtime.error") errors.push(event.message);
     });
-    const completed = new Promise<Record<string, unknown>>((resolve) => {
-      runtime.adapter.onEvent((event) => {
-        if (event.type === "turn.completed") resolve(event as unknown as Record<string, unknown>);
-      });
-    });
 
     await expect(runtime.adapter.sendTurn({
       threadId: "thread-images",
