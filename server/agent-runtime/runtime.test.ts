@@ -134,7 +134,6 @@ function testModelAdapter(
   modelCapabilities: ModelCapabilities = supportedCapabilities,
 ): TestModelAdapter {
   const requests: ModelGenerateRequest[] = [];
-  let round = 0;
   return {
     providerId: "fixture",
     requests,
@@ -145,8 +144,9 @@ function testModelAdapter(
       return modelCapabilities;
     },
     async *generate(request) {
+      const round = requests.length;
       requests.push(request);
-      for (const event of rounds[round++] ?? []) yield event;
+      for (const event of rounds[round] ?? []) yield event;
     },
   };
 }
@@ -383,11 +383,19 @@ describe("createAgentEngine", () => {
     const modelAdapter: TestModelAdapter = {
       ...testModelAdapter([]),
       requests: [],
-      async *generate(request) {
+      generate(request) {
         requests++;
         request.signal.throwIfAborted();
         notifyStarted();
-        throw new FixtureModelAdapterError("temporary refusal", "transient", true, true, false);
+        return {
+          [Symbol.asyncIterator]() {
+            return {
+              next: async (): Promise<IteratorResult<ModelEvent>> => {
+                throw new FixtureModelAdapterError("temporary refusal", "transient", true, true, false);
+              },
+            };
+          },
+        };
       },
     };
     const capabilities = testCapabilitySession([]);

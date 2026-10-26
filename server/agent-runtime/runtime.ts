@@ -237,7 +237,7 @@ export function createAgentEngine(dependencies: {
                 let result: CapabilityResult;
                 try {
                   result = await request.capabilities.invoke(call, { grant: request.grant, signal });
-                } catch (error) {
+                } catch {
                   const uncertain: CapabilityResult = {
                     callId: call.callId,
                     ok: false,

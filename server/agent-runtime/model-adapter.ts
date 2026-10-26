@@ -235,7 +235,7 @@ export function createOpenAICompatibleModelAdapter(config: OpenAICompatibleModel
             }),
             signal,
           });
-        } catch (error) {
+        } catch {
           if (request.signal.aborted) throw abortError(request.signal.reason);
           if (timeoutController.signal.aborted) {
             throw new OpenAICompatibleAdapterError("The model request timed out", "transient", true, !emitted, emitted);
