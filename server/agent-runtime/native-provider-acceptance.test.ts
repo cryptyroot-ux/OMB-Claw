@@ -198,7 +198,7 @@ describe("native ProviderAdapter acceptance", () => {
       unavailableReason: "missing key",
       timeoutMs: 5_000,
       nativeLog: { source: "fixture", outgoing: () => ({}), incoming: () => ({}) },
-      computerUse: false,
+      computerUse: true,
       nativeAgentEngine: createAgentEngine({
         adapters: {
           resolve: () => createOpenAICompatibleModelAdapter({
@@ -262,7 +262,7 @@ describe("native ProviderAdapter acceptance", () => {
       unavailableReason: "missing key",
       timeoutMs: 5_000,
       nativeLog: { source: "fixture", outgoing: () => ({}), incoming: () => ({}) },
-      computerUse: false,
+      computerUse: true,
       nativeAgentEngine: createAgentEngine({
         adapters: {
           resolve: () => createOpenAICompatibleModelAdapter({
@@ -287,17 +287,14 @@ describe("native ProviderAdapter acceptance", () => {
       });
     });
 
-    await runtime.adapter.sendTurn({
+    await expect(runtime.adapter.sendTurn({
       threadId: "thread-images",
       text: "Look at this.",
       agentEngine: "omb-native",
       model: "fixture-model",
       approvalMode: "full",
       images: [{ path: "/nonexistent.png", mime: "image/png", bytes: 0 }],
-    });
-    const result = await completed;
-    expect(result).toMatchObject({ ok: false, stopReason: "error" });
-    expect(errors.join("\n")).toMatch(/ENOENT|image/i);
+    })).rejects.toThrow(/ENOENT|image/i);
     expect(requests).toHaveLength(0);
   });
 
@@ -333,7 +330,7 @@ describe("native ProviderAdapter acceptance", () => {
       unavailableReason: "missing key",
       timeoutMs: 5_000,
       nativeLog: { source: "fixture", outgoing: () => ({}), incoming: () => ({}) },
-      computerUse: false,
+      computerUse: true,
       nativeAgentEngine: createAgentEngine({
         adapters: {
           resolve: () => createOpenAICompatibleModelAdapter({
