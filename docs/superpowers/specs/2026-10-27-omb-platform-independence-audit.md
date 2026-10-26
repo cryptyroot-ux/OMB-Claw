@@ -114,14 +114,21 @@ Acceptance: baseline recorded; no code behaviour change.
   loop is either deleted or kept behind an explicit compatibility flag, never the default.
 - Characterize every existing native test; all must pass.
 
-**Progress (2026-10-27):** Phase 1a complete. The native turn cycle — capability mounting, capability
-session, engine run, event bridge, steer handoff, approval close, and tool-process cleanup — now lives in
-`server/agent-runtime/turn-runtime.ts` (`runNativeTurn`). `openai-chat.ts` only admits the turn, creates
-the approval, and delegates. Native verification: agent-runtime 8 files / 59 tests; openai-chat suites
-10 files / 222 tests; native-only + openai-tools 4 tests; native-ui 1 test.
+**Progress (2026-10-27, Phase 1b facade):** `NativeTurnRuntime` (`sendTurn`) now exists in
+`server/agent-runtime/native-turn-runtime.ts` and is exposed on `ProviderInstance.nativeTurnRuntime`.
+The seven API drivers wrap their `sendTurn` closure; `QuickModelFallback` and the room dispatch in
+`server/index.ts` route through `nativeTurnRuntime` (fallback to `adapter.sendTurn`). `index.ts` no
+longer calls `ProviderAdapter.sendTurn` directly (only type-only `Parameters<...>` references remain).
+Verification: typecheck OK; agent-runtime 11 files / 67 tests; openai-chat 5 files / 207 tests;
+native-only + openai-tools 4 tests; native-ui 1 test; lint OK. Commits: `11818f313` (facade) on top of
+`7b85cb39e` (docs) on top of `c2607d28d` (capability routing).
 
-Phase 1b (next): expose a `NativeTurnRuntime` on `ProviderInstance` and route `server/index.ts` /
-`QuickModelFallback` through it, so the index no longer calls `ProviderAdapter.sendTurn` for API drivers.
+Phase 1b step 3 (remaining): move admission, `mountChatTools`, `createChatToolApproval`, and the native
+branch body out of `openai-chat.ts` into the runtime. This requires lifting shared turn state
+(`active`, `listeners`, `emit`, `base`, `complete`, `messagesFor`, `sessionGrants`) from the driver into
+the runtime (F8). It is a larger, mechanical move and is intentionally NOT done in the facade slice to
+avoid a big-bang breakage; it is the next dedicated sub-slice. Step 4 (retire the legacy driver loop for
+API drivers) follows after step 3 is green.
 
 Acceptance: `rg "nativeEngine.run" server/drivers` returns no driver-owned call; only `TurnRuntime`
 invokes the engine. `server/index.ts` calls `TurnRuntime`, not `ProviderAdapter.sendTurn`.
