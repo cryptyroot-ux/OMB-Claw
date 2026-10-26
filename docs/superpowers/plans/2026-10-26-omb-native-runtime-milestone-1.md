@@ -165,25 +165,28 @@ Commit with `feat: add OpenAI-compatible model adapter`.
 - Consumes: Task 1 `CapabilitySession`, `CapabilityDescriptor`, `CapabilityCall`, `CapabilityGrant`, and `CapabilityResult`; existing `ChatToolSession` and chat approval API.
 - Produces: `createChatCapabilitySession({ session, approval }): CapabilitySession`; `approval` adapts the existing `floored`, `ask`, and `question` decisions without bypassing them.
 
-- [ ] **Step 1: Write failing bridge tests**
+- [x] **Step 1: Write failing bridge tests**
 
-Add tests named `lists_only_in_scope_chat_capabilities`, `waits_for_approval_before_execution`, `preserves_mixed_batch_partial_results`, `does_not_expose_skill_assets_as_capabilities`, and `closes_mcp_session_after_cancel_or_failure`. Use a temporary local MCP fixture and assert the fixture's side-effect log.
+Add tests named `lists only in-scope chat capabilities`, `waits for approval before executing an ask-only capability`, `preserves mixed batch partial results without replay`, `does not expose skill assets as capabilities`, and `closes the chat session and refuses later invocation`. Use a fake `ChatToolSession` and approval broker; assert denied/out-of-scope calls produce no execution.
 
-- [ ] **Step 2: Run the focused bridge tests and confirm RED**
+- [x] **Step 2: Run the focused bridge tests and confirm RED**
 
 Run: `pnpm vitest run server/agent-runtime/chat-capability-runtime.test.ts`
 Expected: tests fail because the new bridge is absent.
 
-- [ ] **Step 3: Adapt existing ChatToolSession into CapabilityRuntime**
+- [x] **Step 3: Adapt existing ChatToolSession into CapabilityRuntime**
 
 Map `ChatToolSession.definitions` to descriptors and implement `list`, `validate`, `invoke`, and `close`. AgentRuntime calls `validate` for every call in a batch before any side effect; `invoke` rechecks scope and current approval for each call in provider order. Never execute a denied call; normalize output/images/errors; close the session on every terminal path. Preserve the existing `ask_user`, MCP, and computer ownership rules. Do not load Skills as executable capabilities.
 
-- [ ] **Step 4: Run bridge and approval tests**
+- [x] **Step 4: Run bridge and approval tests**
 
 Run: `pnpm vitest run server/agent-runtime/chat-capability-runtime.test.ts server/drivers/chat-mcp-tools.test.ts server/drivers/chat-tool-approval.test.ts`
 Expected: selected tests pass; denied/out-of-scope calls produce no fixture side effect.
 
-- [ ] **Step 5: Commit**
+Run: `pnpm typecheck`
+Expected: TypeScript build and server typecheck pass.
+
+- [x] **Step 5: Commit**
 
 Commit with `feat: bridge chat tools into the native Capability Runtime`.
 
