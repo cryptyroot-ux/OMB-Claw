@@ -113,6 +113,8 @@ export interface SendTurnInput {
   confinedWhy?: string;
   /** Images for this user turn only; kept out of replay transcripts. */
   images?: TurnImageInput[];
+  /** Optional hard caps for this turn. Only honoured by the native loop. */
+  budget?: { maxTokens?: number; maxCostUsd?: number; maxWallTimeMs?: number };
   model?: string;
   /** Explicit opt-in to the OMB-owned API agent loop; absent means the legacy driver loop. */
   agentEngine?: "omb-native";

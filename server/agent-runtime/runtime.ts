@@ -239,6 +239,12 @@ export function createAgentEngine(dependencies: {
           const adapter = dependencies.adapters.resolve(request.providerModel);
           const modelCapabilities = adapter.capabilities(request.providerModel.modelId);
           const budget = contextBudget(modelCapabilities.contextWindow);
+          const runBudget = request.budget;
+          const runStartedAt = Date.now();
+          let budgetExhausted = false;
+          let totalTokens = 0;
+          let totalCost = 0;
+          let hasCost = false;
           let compactions = 0;
           let lastCompactAttempt = 0;
           const compact = async (trigger: "auto" | "overflow"): Promise<boolean> => {
@@ -299,6 +305,12 @@ export function createAgentEngine(dependencies: {
             if (control.steers.length) {
               for (const text of control.steers.splice(0)) messages.push({ role: "user", content: text });
             }
+            if (runBudget?.maxWallTimeMs && Date.now() - runStartedAt > runBudget.maxWallTimeMs) {
+              budgetExhausted = true;
+            }
+            if (budgetExhausted) {
+              throw new AgentRuntimeError("budget_exhausted", "Turn stopped at the configured token, cost, or time budget.");
+            }
             if (
               compactions < COMPACTION_MAX_PER_RUN
               && messages.length - lastCompactAttempt >= COMPACTION_MIN_MESSAGE_GAP
@@ -346,6 +358,10 @@ export function createAgentEngine(dependencies: {
                       responseCalls = event.calls;
                       break;
                     case "usage":
+                      totalTokens += event.input + event.output;
+                      if (event.costUsd !== undefined) { totalCost += event.costUsd; hasCost = true; }
+                      if (runBudget?.maxTokens && totalTokens > runBudget.maxTokens) budgetExhausted = true;
+                      if (runBudget?.maxCostUsd && hasCost && totalCost > runBudget.maxCostUsd) budgetExhausted = true;
                       emit(request.threadId, { type: "usage", runId, input: event.input, output: event.output, ...(event.cachedInput !== undefined ? { cachedInput: event.cachedInput } : {}), ...(event.costUsd !== undefined ? { costUsd: event.costUsd } : {}) });
                       break;
                     case "completed":
@@ -356,6 +372,9 @@ export function createAgentEngine(dependencies: {
                   }
                 }
                 if (!sawCompletion) throw modelEventFailure("The model stream ended without a completion event");
+                if (budgetExhausted) {
+                  throw new AgentRuntimeError("budget_exhausted", "Turn stopped at the configured token, cost, or time budget.");
+                }
                 break;
               } catch (error) {
                 if (
@@ -415,6 +434,9 @@ export function createAgentEngine(dependencies: {
               }
             }
 
+            if (budgetExhausted) {
+              throw new AgentRuntimeError("budget_exhausted", "Turn stopped at the configured token, cost, or time budget.");
+            }
             if (responseCalls.length > 0) {
               if (toolDescriptors.length === 0) throw new AgentRuntimeError("tool_not_available", "The model returned tool calls but no capabilities are available");
               if (toolCalls + responseCalls.length > MAX_TOOL_CALLS) throw new AgentRuntimeError("tool_budget_exceeded", `Stopped after ${MAX_TOOL_CALLS} tool calls`);

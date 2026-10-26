@@ -235,6 +235,12 @@ export interface AgentRunRequest {
   readonly signal: AbortSignal;
   /** Images attached to this turn only; kept out of the replay transcript. */
   readonly images?: ReadonlyArray<{ readonly mimeType: string; readonly data: string }>;
+  /** Optional hard caps for this run. The run stops gracefully when any is reached. */
+  readonly budget?: {
+    readonly maxTokens?: number;
+    readonly maxCostUsd?: number;
+    readonly maxWallTimeMs?: number;
+  };
   /** Nudge a reply that announces a step and ends without a tool call, at most three times per run. */
   readonly nudgeAnnouncedAction?: boolean;
 }

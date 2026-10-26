@@ -972,6 +972,34 @@ describe("createAgentEngine", () => {
     expect(capabilities.invocations).toEqual(["call-a"]);
   });
 
+  it("stops a turn when the token budget is exhausted", async () => {
+    const modelAdapter = testModelAdapter([
+      [
+        { type: "usage", input: 1000, output: 1000 },
+        { type: "content.delta", kind: "assistant_text", delta: "Answered." },
+        { type: "completed", finishReason: "stop" },
+      ],
+    ]);
+    const store = testRunStore();
+    const engine = createAgentEngine({ adapters: registryFor(modelAdapter), store });
+
+    const handle = await engine.run({
+      botId: "bot-1",
+      threadId: "thread-1",
+      text: "Do the task.",
+      messages: userMessages,
+      providerModel: { providerId: "fixture", modelId: "fixture-model" },
+      grant,
+      capabilities: testCapabilitySession([descriptor("read-a")]),
+      signal: new AbortController().signal,
+      budget: { maxTokens: 1500 },
+    });
+    await handle.done;
+
+    expect(modelAdapter.requests).toHaveLength(1);
+    expect(store.getRun(handle.runId)).toMatchObject({ status: "failed", failureCode: "budget_exhausted" });
+  });
+
   it("steers a running turn before the next round and refuses after it finishes", async () => {
     let entered!: () => void;
     const started = new Promise<void>((resolve) => { entered = resolve; });

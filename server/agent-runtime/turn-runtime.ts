@@ -187,6 +187,7 @@ export async function runNativeTurn(context: NativeTurnContext): Promise<void> {
       grant,
       capabilities: capabilitySession,
       signal: abort.signal,
+      ...(turn.budget ? { budget: turn.budget } : {}),
       ...(nativeImages.length ? { images: nativeImages } : {}),
       ...(context.nudgeAnnouncedAction ? { nudgeAnnouncedAction: true } : {}),
     });
