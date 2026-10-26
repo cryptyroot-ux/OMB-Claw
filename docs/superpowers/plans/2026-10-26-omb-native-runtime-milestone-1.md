@@ -29,7 +29,7 @@
 - Unknown tool capability on a custom OpenAI-compatible model must block the request; test in Task 3.
 - A mixed allowed/denied tool batch may partially execute only after whole-batch syntax/schema/budget preflight; test in Task 4.
 - Crash after dispatch but before result persistence must become `recovery_required` and must not replay; test in Task 2.
-- Cancellation after streamed output or capability dispatch must not retry or start a later call; test in Task 1.
+- A transient model error is retried only before visible output or capability dispatch; cancellation/late errors must not retry or start a later call; test in Task 1.
 - Duplicate call IDs, malformed schemas, and aggregate tool-budget overflow must cause zero batch side effects; test in Task 1.
 
 ---
@@ -39,7 +39,11 @@
 **Files:**
 - Modify: `server/agent-runtime/contracts.ts`
 - Modify: `server/agent-runtime/runtime.ts`
+- Modify: `server/agent-runtime/model-adapter.ts`
+- Modify: `server/agent-runtime/capability-runtime.ts`
 - Modify: `server/agent-runtime/runtime.test.ts`
+- Modify: `server/agent-runtime/model-adapter.test.ts`
+- Modify: `server/agent-runtime/capability-runtime.test.ts`
 
 **Interfaces:**
 - Consumes: existing `ProviderModelRef`, `CapabilityGrant`, and `CapabilityDescriptor` concepts.
@@ -52,28 +56,31 @@
   - `CapabilityGrant` has `botId`, `threadId`, `approvalMode`, `allowed`, and `denied`. `CapabilityDescriptor` has `id`, `name`, `description`, `schema`, `risk`, `sideEffect`, and `timeoutMs`. `CapabilityCall` has `runId`, `callId`, `capabilityId`, `arguments`, `botId`, and `threadId`; `CapabilityResult` has `callId`, `ok`, `content`, and optional `images`, `uncertain`, and `error`.
   - A run-scoped `CapabilitySession` exposes `list(grant: CapabilityGrant): readonly CapabilityDescriptor[]`, `validate(call: CapabilityCall, grant: CapabilityGrant): void`, `invoke(call: CapabilityCall, context: { grant: CapabilityGrant; signal: AbortSignal }): Promise<CapabilityResult>`, and `close(): Promise<void>`.
   - `AgentRunStatus = "queued" | "running" | "waiting" | "completed" | "failed" | "interrupted" | "recovery_required"`; `CapabilityCallStatus = "dispatching" | "succeeded" | "failed" | "recovery_required"`.
-  - `AgentRunRecord` stores `runId`, `botId`, `threadId`, `engineId`, `providerModel`, `status`, `startedAt`, `updatedAt`, `modelRounds`, `toolCalls`, and optional `failureCode`. `AgentCapabilityCallRecord` stores `runId`, `callId`, `capabilityId`, `risk`, `status`, `startedAt`, and optional `settledAt`; it does not store raw arguments, prompts, or credentials.
-  - `AgentRunStore.createRun(record: AgentRunRecord): void`, `getRun(runId: string): AgentRunRecord | undefined`, `transitionRun(runId: string, expected: AgentRunStatus, next: AgentRunStatus, updatedAt: number, failureCode?: string): boolean` (false means stale prior status), `beginCapabilityCall(record: AgentCapabilityCallRecord): void`, `settleCapabilityCall(runId: string, callId: string, status: CapabilityCallStatus, settledAt: number): void`, and `recoverUnsettledRuns(now: number): void`.
-  - `AgentEvent` includes `run.started`, `model.delta`, `tool.calls`, `tool.result`, `turn.completed`, `run.failed`, `run.interrupted`, and `run.recovery_required`; each event carries its `runId`.
+  - `AgentRunRecord` stores `runId`, `botId`, `threadId`, `engineId`, `providerModel`, `status`, `startedAt`, `updatedAt`, `modelRounds`, `toolCalls`, and optional `failureCode`. `modelRounds` counts each `ModelAdapter.generate` attempt, including a safe retry; the 64-round cap applies to attempts. `AgentCapabilityCallRecord` stores `runId`, `callId`, `capabilityId`, `risk`, `status`, `startedAt`, and optional `settledAt`; it does not store raw arguments, prompts, or credentials.
+  - `AgentRunStore.createRun(record: AgentRunRecord): void`, `getRun(runId: string): AgentRunRecord | undefined`, `updateRunProgress(runId: string, progress: { modelRounds: number; toolCalls: number; updatedAt: number }): void`, `transitionRun(runId: string, expected: AgentRunStatus, next: AgentRunStatus, updatedAt: number, failureCode?: string): boolean` (false means stale prior status), `beginCapabilityCall(record: AgentCapabilityCallRecord): void`, `settleCapabilityCall(runId: string, callId: string, status: CapabilityCallStatus, settledAt: number): void`, and `recoverUnsettledRuns(now: number): void`.
+  - `AgentEvent` includes `run.started`, `model.delta`, `usage`, `tool.calls`, `tool.result`, `turn.completed`, `run.failed`, `run.interrupted`, and `run.recovery_required`; each event carries its `runId`.
   - `createAgentEngine({ adapters, store }): AgentEngine`; `AgentEngine.run(request: AgentRunRequest): Promise<AgentRunHandle>`, `interrupt(runId: string): Promise<void>`, `getState(runId: string): AgentRunRecord | undefined`, and `onEvent(threadId: string, listener: (event: AgentEvent) => void): () => void`. `AgentRunRequest` contains `botId`, `threadId`, `text`, `messages: ReadonlyArray<ModelMessage>`, `providerModel`, `grant`, `capabilities: CapabilitySession`, and `signal`; `AgentRunHandle` contains `runId` and `done: Promise<void>`.
 
-- [ ] **Step 1: Write failing runtime behavior tests**
+- [x] **Step 1: Write failing runtime behavior tests**
 
-Add tests named `runs_two_tool_rounds_and_returns_final_answer`, `blocks_unknown_model_capability_before_dispatch`, `rejects_invalid_batch_before_any_side_effect`, and `interrupts_without_retry_after_visible_output`. Use fake adapters, a fake run store, and safe fixture capabilities. Assert ordered events, final state/counters, zero calls for rejected batches, and no post-cancel dispatch.
+Add the eight runtime behavior tests named in the previous list. Also update the prototype adapter tests to cover tri-state capabilities and `AsyncIterable<ModelEvent>`, and update the in-memory capability tests to cover `CapabilitySession` list/validate/invoke/close with a run ID. Use fake adapters, a fake run store, and safe fixture capabilities. Assert ordered events, final state/counters, zero calls for rejected batches, safe pre-output retry only, and no post-cancel dispatch or duplicate call.
 
-- [ ] **Step 2: Run the focused tests and confirm RED**
+- [x] **Step 2: Run the focused tests and confirm RED**
 
-Run: `pnpm vitest run server/agent-runtime/runtime.test.ts`
-Expected: failures show missing runtime behavior or contract, not test setup errors.
+Run: `pnpm vitest run server/agent-runtime/`
+Expected: the new runtime behaviors and old adapter/session contract tests fail against the obsolete prototype implementations, not due to test setup errors.
 
-- [ ] **Step 3: Implement the protocol-neutral contracts and loop**
+- [x] **Step 3: Implement the protocol-neutral contracts and loop**
 
-Use the specified `AgentEngine`, `ModelAdapter`, `CapabilitySession`, and `AgentRunStore` ports. Consume normalized `ModelEvent`s, prevalidate a full tool batch before dispatch, preserve `content: null` for assistant tool-call messages, and keep round/call caps at the existing API-loop limits of 64 rounds and 200 calls.
+Implement the protocol-neutral loop and update the existing in-memory CapabilitySession and adapter stub to the new contracts so this task remains typecheckable. Consume normalized `ModelEvent`s, prevalidate a full tool batch before dispatch, preserve `content: null` for assistant tool-call messages, and keep round/call caps at the existing API-loop limits of 64 attempts and 200 calls. Persist progress counters through `updateRunProgress`. Retry at most three total attempts only for `ModelAdapterError(code="transient", retryable=true, requestStarted=false)` before any visible delta or capability dispatch; use the existing interruptible backoff helper. Never retry after output or a possible side effect. Task 3 later replaces the stub adapter with real HTTP/SSE transport; Task 4 adds the ChatToolSession bridge.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests and typecheck**
 
-Run: `pnpm vitest run server/agent-runtime/runtime.test.ts`
-Expected: all runtime tests pass; denied/invalid/cancelled cases invoke no forbidden follow-up call.
+Run: `pnpm vitest run server/agent-runtime/`
+Expected: all runtime and in-memory adapter/session tests pass; denied/invalid/cancelled cases invoke no forbidden follow-up call.
+
+Run: `pnpm typecheck`
+Expected: TypeScript build and server typecheck pass with every current `server/agent-runtime/` consumer aligned to the new ports.
 
 - [ ] **Step 5: Commit**
 
@@ -194,11 +201,11 @@ Commit with `feat: bridge chat tools into the native Capability Runtime`.
 
 - [ ] **Step 1: Add the ProviderAdapter-level regression test first**
 
-Extend the existing local HTTP + MCP fixture with `native_engine_completes_two_tool_rounds_without_agent_cli` using `createOpenAIChatRuntime` configured with the real OpenAI-compatible HTTP adapter and an injected AgentEngine. Assert model → two capability/result rounds → final answer, persisted run/call state, existing event shape, and exactly one fixture effect per call. Record child processes and fail if Claude/Codex/OpenCode/Hermes or another agent CLI launches; allow only the declared Node-based test/MCP fixture processes.
+Extend the existing local HTTP + MCP fixture with `native_engine_completes_two_tool_rounds_without_agent_cli` and `native_path_rejects_unrepresented_image_input`. Use `createOpenAIChatRuntime` configured with the real OpenAI-compatible HTTP adapter and an injected AgentEngine. Assert model → two capability/result rounds → final answer, persisted run/call state, existing event shape, and exactly one fixture effect per call. Record child processes and fail if Claude/Codex/OpenCode/Hermes or another agent CLI launches; allow only the declared Node-based test/MCP fixture processes.
 
 - [ ] **Step 2: Run the test and confirm RED**
 
-Run: `pnpm vitest run server/drivers/openai-chat-tools.test.ts -t native_engine_completes_two_tool_rounds_without_agent_cli`
+Run: `pnpm vitest run server/drivers/openai-chat-tools.test.ts -t 'native_engine_completes_two_tool_rounds_without_agent_cli|native_path_rejects_unrepresented_image_input'`
 Expected: the test fails because `createOpenAIChatRuntime` does not yet delegate through the injected AgentRuntime.
 
 - [ ] **Step 3: Add the injectable AgentRuntime path**

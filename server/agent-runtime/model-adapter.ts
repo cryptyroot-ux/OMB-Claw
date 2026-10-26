@@ -1,4 +1,10 @@
-import type { ModelAdapter, ModelCatalog, ModelGenerateRequest } from "./contracts.ts";
+import type {
+  ModelAdapter,
+  ModelCapabilities,
+  ModelCatalog,
+  ModelEvent,
+  ModelGenerateRequest,
+} from "./contracts.ts";
 
 export interface OpenAICompatibleModelAdapterConfig {
   providerId: string;
@@ -11,43 +17,46 @@ export interface OpenAICompatibleModelAdapterConfig {
   imageInput: boolean;
 }
 
+function support(value: boolean): "supported" | "unsupported" {
+  return value ? "supported" : "unsupported";
+}
+
+/**
+ * Protocol placeholder for the OpenAI-compatible adapter. The real Chat
+ * Completions transport arrives in the next milestone task; this class keeps
+ * the contract honest and lets the Agent Runtime be tested without a network.
+ */
 export function createOpenAICompatibleModelAdapter(config: OpenAICompatibleModelAdapterConfig): ModelAdapter {
   return {
     providerId: config.providerId,
 
     async discoverModels(): Promise<ModelCatalog> {
-      // In a real implementation, this would fetch from the provider's /models endpoint.
-      // For now, return the configured default.
       return {
         default: config.defaultModel,
         options: [{ id: config.defaultModel, label: config.defaultModel, contextWindow: config.contextWindow }],
       };
     },
 
-    capabilities(_modelId: string): import("./contracts.ts").ModelCapabilities {
-      // Capabilities are per-model; in a real implementation, this would come from
-      // a model catalog or a capability probe. Here we use the config defaults.
+    capabilities(_modelId: string): ModelCapabilities {
       return {
-        tools: config.supportsTools,
-        parallelTools: false,
-        streaming: config.supportsStreaming,
-        contextWindow: config.contextWindow,
-        imageInput: config.imageInput,
-        imageOutput: false,
-        structuredOutput: false,
+        tools: support(config.supportsTools),
+        parallelTools: "unknown",
+        streaming: support(config.supportsStreaming),
+        contextWindow: { status: "known", value: config.contextWindow },
+        imageInput: support(config.imageInput),
+        imageOutput: "unsupported",
+        audioInput: "unsupported",
+        audioOutput: "unsupported",
+        structuredOutput: "unsupported",
+        toolSchemaLimit: { status: "unknown" },
       };
     },
 
-    async generate(_request: ModelGenerateRequest) {
-      // This is a stub that would be replaced with actual HTTP calls to the provider.
-      // The real implementation would use fetch to call /chat/completions.
-      // For now, return a simple response.
-      return {
-        text: "Stub response from OpenAI-compatible adapter",
-        toolCalls: [],
-        finishReason: "stop",
-        usage: { input: 0, output: 0 },
-      };
+    async *generate(request: ModelGenerateRequest): AsyncIterable<ModelEvent> {
+      request.signal.throwIfAborted();
+      yield { type: "content.delta", kind: "assistant_text", delta: "Stub response from OpenAI-compatible adapter" };
+      request.signal.throwIfAborted();
+      yield { type: "completed", finishReason: "stop" };
     },
   };
 }

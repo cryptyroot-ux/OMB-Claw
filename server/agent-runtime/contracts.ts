@@ -19,15 +19,20 @@ export interface ProviderModelRef {
   modelId: ModelId;
 }
 
+export type CapabilitySupport = "supported" | "unsupported" | "unknown";
+export type CapabilityLimit = { readonly status: "known"; readonly value: number } | { readonly status: "unknown" };
+
 export interface ModelCapabilities {
-  readonly tools: boolean;
-  readonly parallelTools: boolean;
-  readonly streaming: boolean;
-  readonly contextWindow: number;
-  readonly imageInput: boolean;
-  readonly imageOutput: boolean;
-  readonly structuredOutput: boolean;
-  readonly toolSchemaLimit?: number;
+  readonly tools: CapabilitySupport;
+  readonly parallelTools: CapabilitySupport;
+  readonly streaming: CapabilitySupport;
+  readonly contextWindow: CapabilityLimit;
+  readonly imageInput: CapabilitySupport;
+  readonly imageOutput: CapabilitySupport;
+  readonly audioInput: CapabilitySupport;
+  readonly audioOutput: CapabilitySupport;
+  readonly structuredOutput: CapabilitySupport;
+  readonly toolSchemaLimit: CapabilityLimit;
 }
 
 export interface ModelCatalogEntry {
@@ -67,22 +72,31 @@ export interface ModelGenerateRequest {
   readonly model: string;
   readonly tools: ReadonlyArray<CapabilityDescriptor>;
   readonly signal: AbortSignal;
-  readonly onDelta?: (delta: string, kind: "assistant_text" | "reasoning_text") => void;
-  readonly onUsage?: (usage: { readonly input: number; readonly output: number; readonly cachedInput?: number; readonly costUsd?: number }) => void;
 }
 
 export type ModelEvent =
-  | { readonly type: "content.delta"; readonly streamKind: "assistant_text" | "reasoning_text"; readonly delta: string }
+  | { readonly type: "content.delta"; readonly kind: "assistant_text" | "reasoning_text"; readonly delta: string }
   | { readonly type: "tool_calls"; readonly calls: ReadonlyArray<ModelToolCall> }
   | { readonly type: "usage"; readonly input: number; readonly output: number; readonly cachedInput?: number; readonly costUsd?: number }
-  | { readonly type: "completed"; readonly finishReason: string | null }
-  | { readonly type: "error"; readonly message: string };
+  | { readonly type: "completed"; readonly finishReason: string | null };
+
+export type ModelAdapterErrorCode = "transient" | "unsupported_capability" | "invalid_request" | "terminal";
+
+export interface ModelAdapterError extends Error {
+  readonly code: ModelAdapterErrorCode;
+  readonly retryable: boolean;
+  readonly requestStarted: boolean;
+}
 
 export interface ModelAdapter {
   readonly providerId: ProviderId;
   discoverModels(): Promise<ModelCatalog>;
   capabilities(modelId: ModelId): ModelCapabilities;
-  generate(request: ModelGenerateRequest): Promise<{ readonly text: string; readonly toolCalls: ReadonlyArray<ModelToolCall>; readonly finishReason: string | null; readonly usage?: { readonly input: number; readonly output: number; readonly cachedInput?: number; readonly costUsd?: number } }>;
+  generate(request: ModelGenerateRequest): AsyncIterable<ModelEvent>;
+}
+
+export interface ModelAdapterRegistry {
+  resolve(ref: ProviderModelRef): ModelAdapter;
 }
 
 export interface CapabilityGrant {
@@ -104,6 +118,7 @@ export interface CapabilityDescriptor {
 }
 
 export interface CapabilityCall {
+  readonly runId: RunId;
   readonly callId: CapabilityCallId;
   readonly capabilityId: CapabilityId;
   readonly arguments: unknown;
@@ -120,50 +135,81 @@ export interface CapabilityResult {
   readonly error?: string;
 }
 
-export interface CapabilityRuntime {
-  list(context: { readonly botId: BotId; readonly threadId: ThreadId; readonly grant: CapabilityGrant }): ReadonlyArray<CapabilityDescriptor>;
+export interface CapabilitySession {
+  list(grant: CapabilityGrant): ReadonlyArray<CapabilityDescriptor>;
+  validate(call: CapabilityCall, grant: CapabilityGrant): void;
   invoke(call: CapabilityCall, context: { readonly grant: CapabilityGrant; readonly signal: AbortSignal }): Promise<CapabilityResult>;
-  cancel(callId: CapabilityCallId): Promise<void>;
+  close(): Promise<void>;
 }
 
-export type RunStatus = "queued" | "running" | "waiting" | "completed" | "failed" | "interrupted";
+export type AgentRunStatus = "queued" | "running" | "waiting" | "completed" | "failed" | "interrupted" | "recovery_required";
+export type CapabilityCallStatus = "dispatching" | "succeeded" | "failed" | "recovery_required";
 
-export interface RunState {
+export interface AgentRunRecord {
   readonly runId: RunId;
   readonly engineId: EngineId;
   readonly providerModel: ProviderModelRef;
-  readonly status: RunStatus;
+  readonly status: AgentRunStatus;
   readonly threadId: ThreadId;
   readonly botId: BotId;
-  readonly startedAt: string;
-  readonly lastActivityAt: string;
+  readonly startedAt: number;
+  readonly updatedAt: number;
   readonly modelRounds: number;
   readonly toolCalls: number;
-  readonly resumeCursor?: unknown;
+  readonly failureCode?: string;
+}
+
+export interface AgentCapabilityCallRecord {
+  readonly runId: RunId;
+  readonly callId: CapabilityCallId;
+  readonly capabilityId: CapabilityId;
+  readonly risk: CapabilityDescriptor["risk"];
+  readonly status: CapabilityCallStatus;
+  readonly startedAt: number;
+  readonly settledAt?: number;
+}
+
+export interface AgentRunStore {
+  createRun(record: AgentRunRecord): void;
+  getRun(runId: RunId): AgentRunRecord | undefined;
+  updateRunProgress(runId: RunId, progress: { readonly modelRounds: number; readonly toolCalls: number; readonly updatedAt: number }): void;
+  transitionRun(runId: RunId, expected: AgentRunStatus, next: AgentRunStatus, updatedAt: number, failureCode?: string): boolean;
+  beginCapabilityCall(record: AgentCapabilityCallRecord): void;
+  settleCapabilityCall(runId: RunId, callId: CapabilityCallId, status: CapabilityCallStatus, settledAt: number): void;
+  recoverUnsettledRuns(now: number): void;
 }
 
 export type AgentEvent =
   | { readonly type: "run.started"; readonly runId: RunId; readonly engineId: EngineId; readonly providerModel: ProviderModelRef }
-  | { readonly type: "model.delta"; readonly runId: RunId; readonly streamKind: "assistant_text" | "reasoning_text"; readonly delta: string }
+  | { readonly type: "model.delta"; readonly runId: RunId; readonly kind: "assistant_text" | "reasoning_text"; readonly delta: string }
+  | { readonly type: "usage"; readonly runId: RunId; readonly input: number; readonly output: number; readonly cachedInput?: number; readonly costUsd?: number }
   | { readonly type: "tool.calls"; readonly runId: RunId; readonly calls: ReadonlyArray<ModelToolCall> }
   | { readonly type: "tool.result"; readonly runId: RunId; readonly callId: CapabilityCallId; readonly result: CapabilityResult }
   | { readonly type: "turn.completed"; readonly runId: RunId; readonly ok: boolean; readonly stopReason: string | null }
   | { readonly type: "run.failed"; readonly runId: RunId; readonly message: string }
-  | { readonly type: "run.interrupted"; readonly runId: RunId };
+  | { readonly type: "run.interrupted"; readonly runId: RunId }
+  | { readonly type: "run.recovery_required"; readonly runId: RunId; readonly callId: CapabilityCallId };
+
+export interface AgentRunRequest {
+  readonly botId: BotId;
+  readonly threadId: ThreadId;
+  readonly text: string;
+  readonly messages: ReadonlyArray<ModelMessage>;
+  readonly providerModel: ProviderModelRef;
+  readonly grant: CapabilityGrant;
+  readonly capabilities: CapabilitySession;
+  readonly signal: AbortSignal;
+}
+
+export interface AgentRunHandle {
+  readonly runId: RunId;
+  readonly done: Promise<void>;
+}
 
 export interface AgentEngine {
   readonly engineId: EngineId;
-  run(request: {
-    readonly botId: BotId;
-    readonly threadId: ThreadId;
-    readonly text: string;
-    readonly providerModel: ProviderModelRef;
-    readonly modelAdapter: ModelAdapter;
-    readonly capabilityRuntime: CapabilityRuntime;
-    readonly grant: CapabilityGrant;
-    readonly signal: AbortSignal;
-  }): Promise<{ readonly runId: RunId; readonly done: Promise<void> }>;
+  run(request: AgentRunRequest): Promise<AgentRunHandle>;
   interrupt(runId: RunId): Promise<void>;
-  getState(runId: RunId): RunState | undefined;
+  getState(runId: RunId): AgentRunRecord | undefined;
   onEvent(threadId: string, listener: (event: AgentEvent) => void): () => void;
 }

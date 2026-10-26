@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { InMemoryCapabilityRuntime } from "./capability-runtime.ts";
-import type { CapabilityDescriptor, CapabilityGrant } from "./contracts.ts";
+import { InMemoryCapabilitySession } from "./capability-runtime.ts";
+import type { CapabilityCall, CapabilityDescriptor, CapabilityGrant } from "./contracts.ts";
 
 const grant: CapabilityGrant = {
   botId: "bot-1",
@@ -19,45 +19,61 @@ const restrictedGrant: CapabilityGrant = {
   denied: new Set(["write_file"]),
 };
 
-describe("InMemoryCapabilityRuntime", () => {
-  it("registers and lists capabilities", () => {
-    const rt = new InMemoryCapabilityRuntime();
-    const desc: CapabilityDescriptor = { id: "read_file", name: "read_file", description: "Read a file", schema: { type: "object" }, risk: "read", sideEffect: false, timeoutMs: 10000 };
-    rt.register(desc, async (call) => ({ callId: call.callId, ok: true, content: "file contents" }));
-    const listed = rt.list({ botId: "bot-1", threadId: "thread-1", grant });
-    expect(listed).toHaveLength(1);
-    expect(listed[0].id).toBe("read_file");
+const descriptor = (id: string, overrides: Partial<CapabilityDescriptor> = {}): CapabilityDescriptor => ({
+  id,
+  name: id,
+  description: `Fixture capability ${id}`,
+  schema: { type: "object" },
+  risk: "read",
+  sideEffect: false,
+  timeoutMs: 10_000,
+  ...overrides,
+});
+
+const call = (callId: string, capabilityId: string): CapabilityCall => ({
+  runId: "run-1",
+  callId,
+  capabilityId,
+  arguments: {},
+  botId: "bot-1",
+  threadId: "thread-1",
+});
+
+describe("InMemoryCapabilitySession", () => {
+  it("lists only granted capabilities", () => {
+    const session = new InMemoryCapabilitySession();
+    session.register(descriptor("read_file"), async (invoked) => ({ callId: invoked.callId, ok: true, content: "read" }));
+    session.register(descriptor("write_file", { risk: "write", sideEffect: true }), async (invoked) => ({ callId: invoked.callId, ok: true, content: "write" }));
+
+    expect(session.list(restrictedGrant).map((item) => item.id)).toEqual(["read_file"]);
+    expect(session.list(grant).map((item) => item.id)).toEqual(["read_file", "write_file"]);
   });
 
-  it("invokes a registered capability", async () => {
-    const rt = new InMemoryCapabilityRuntime();
-    const desc: CapabilityDescriptor = { id: "read_file", name: "read_file", description: "Read a file", schema: { type: "object" }, risk: "read", sideEffect: false, timeoutMs: 10000 };
-    rt.register(desc, async (call) => ({ callId: call.callId, ok: true, content: "file contents" }));
-    const result = await rt.invoke({ callId: "c1", capabilityId: "read_file", arguments: {}, botId: "bot-1", threadId: "thread-1" }, { grant, signal: new AbortController().signal });
-    expect(result.ok).toBe(true);
-    expect(result.content).toBe("file contents");
+  it("validates before invocation", () => {
+    const session = new InMemoryCapabilitySession();
+    session.register(descriptor("read_file"), async (invoked) => ({ callId: invoked.callId, ok: true, content: "read" }));
+
+    expect(() => session.validate(call("c1", "unknown"), grant)).toThrow("Unknown capability: unknown");
+    expect(() => session.validate(call("c2", "read_file"), restrictedGrant)).not.toThrow();
   });
 
-  it("returns error for unknown capability", async () => {
-    const rt = new InMemoryCapabilityRuntime();
-    const result = await rt.invoke({ callId: "c1", capabilityId: "unknown", arguments: {}, botId: "bot-1", threadId: "thread-1" }, { grant, signal: new AbortController().signal });
+  it("refuses out-of-scope calls", async () => {
+    const session = new InMemoryCapabilitySession();
+    session.register(descriptor("write_file", { risk: "write", sideEffect: true }), async (invoked) => ({ callId: invoked.callId, ok: true, content: "write" }));
+
+    const result = await session.invoke(call("c1", "write_file"), { grant: restrictedGrant, signal: new AbortController().signal });
     expect(result.ok).toBe(false);
-    expect(result.error).toBe("unknown_capability");
+    expect(result.error).toBe("denied");
   });
 
-  it("respects allow/deny grants", async () => {
-    const rt = new InMemoryCapabilityRuntime();
-    const readDesc: CapabilityDescriptor = { id: "read_file", name: "read_file", description: "Read", schema: {}, risk: "read", sideEffect: false, timeoutMs: 10000 };
-    const writeDesc: CapabilityDescriptor = { id: "write_file", name: "write_file", description: "Write", schema: {}, risk: "write", sideEffect: true, timeoutMs: 10000 };
-    rt.register(readDesc, async (call) => ({ callId: call.callId, ok: true, content: "read" }));
-    rt.register(writeDesc, async (call) => ({ callId: call.callId, ok: true, content: "write" }));
+  it("closes the capability session and refuses later invocation", async () => {
+    const session = new InMemoryCapabilitySession();
+    session.register(descriptor("read_file"), async (invoked) => ({ callId: invoked.callId, ok: true, content: "read" }));
 
-    const listed = rt.list({ botId: "bot-1", threadId: "thread-1", grant: restrictedGrant });
-    expect(listed).toHaveLength(1);
-    expect(listed[0].id).toBe("read_file");
-
-    const writeResult = await rt.invoke({ callId: "c2", capabilityId: "write_file", arguments: {}, botId: "bot-1", threadId: "thread-1" }, { grant: restrictedGrant, signal: new AbortController().signal });
-    expect(writeResult.ok).toBe(false);
-    expect(writeResult.error).toBe("denied");
+    await session.close();
+    await session.close();
+    const result = await session.invoke(call("c1", "read_file"), { grant, signal: new AbortController().signal });
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("closed");
   });
 });

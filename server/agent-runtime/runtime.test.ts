@@ -1,137 +1,479 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { createAgentEngine } from "./runtime.ts";
 import type {
   AgentEvent,
-  CapabilityCall,
+  AgentRunRecord,
+  AgentRunStore,
+  CapabilityCallStatus,
+  CapabilityDescriptor,
   CapabilityGrant,
-  CapabilityRuntime,
+  CapabilitySession,
   ModelAdapter,
+  ModelAdapterError,
+  ModelAdapterRegistry,
+  ModelCapabilities,
+  ModelEvent,
   ModelGenerateRequest,
-  ModelToolCall,
+  ModelMessage,
 } from "./contracts.ts";
 
-interface FakeModelAdapter extends ModelAdapter {
+interface TestRunStore extends AgentRunStore {
+  readonly runs: Map<string, AgentRunRecord>;
+  readonly calls: Map<string, { readonly status: CapabilityCallStatus }>;
+}
+
+function testRunStore(): TestRunStore {
+  const runs = new Map<string, AgentRunRecord>();
+  const calls = new Map<string, { readonly status: CapabilityCallStatus }>();
+  return {
+    runs,
+    calls,
+    createRun(record) {
+      runs.set(record.runId, record);
+    },
+    getRun(runId) {
+      return runs.get(runId);
+    },
+    updateRunProgress(runId, progress) {
+      const current = runs.get(runId);
+      if (current) runs.set(runId, { ...current, ...progress });
+    },
+    transitionRun(runId, expected, next, updatedAt, failureCode) {
+      const current = runs.get(runId);
+      if (!current || current.status !== expected) return false;
+      runs.set(runId, { ...current, status: next, updatedAt, ...(failureCode ? { failureCode } : {}) });
+      return true;
+    },
+    beginCapabilityCall(record) {
+      calls.set(`${record.runId}:${record.callId}`, { status: record.status });
+    },
+    settleCapabilityCall(runId, callId, status) {
+      calls.set(`${runId}:${callId}`, { status });
+    },
+    recoverUnsettledRuns() {},
+  };
+}
+
+const supportedCapabilities: ModelCapabilities = {
+  tools: "supported",
+  parallelTools: "supported",
+  streaming: "supported",
+  contextWindow: { status: "known", value: 128_000 },
+  imageInput: "unsupported",
+  imageOutput: "unsupported",
+  audioInput: "unsupported",
+  audioOutput: "unsupported",
+  structuredOutput: "supported",
+  toolSchemaLimit: { status: "known", value: 64_000 },
+};
+
+function descriptor(id: string): CapabilityDescriptor {
+  return {
+    id,
+    name: id,
+    description: `Fixture capability ${id}`,
+    schema: { type: "object", properties: { value: { type: "string" } }, required: ["value"], additionalProperties: false },
+    risk: "read",
+    sideEffect: false,
+    timeoutMs: 5_000,
+  };
+}
+
+interface TestCapabilitySession extends CapabilitySession {
+  readonly validations: string[];
+  readonly invocations: string[];
+  readonly closeCount: number;
+}
+
+function testCapabilitySession(
+  descriptors: readonly CapabilityDescriptor[],
+  invalidCallIds: ReadonlySet<string> = new Set(),
+  uncertainCallIds: ReadonlySet<string> = new Set(),
+  throwingCallIds: ReadonlySet<string> = new Set(),
+): TestCapabilitySession {
+  const validations: string[] = [];
+  const invocations: string[] = [];
+  let closeCount = 0;
+  return {
+    validations,
+    invocations,
+    get closeCount() { return closeCount; },
+    list(grant) {
+      return descriptors.filter((item) => grant.allowed.has(item.id) && !grant.denied.has(item.id));
+    },
+    validate(call) {
+      validations.push(call.callId);
+      if (!descriptors.some((item) => item.id === call.capabilityId)) throw new Error("unknown capability");
+      if (invalidCallIds.has(call.callId)) throw new Error("invalid fixture arguments");
+    },
+    async invoke(call, { grant, signal }) {
+      signal.throwIfAborted();
+      if (grant.denied.has(call.capabilityId) || !grant.allowed.has(call.capabilityId)) {
+        return { callId: call.callId, ok: false, content: "denied", error: "denied" };
+      }
+      invocations.push(call.callId);
+      if (throwingCallIds.has(call.callId)) throw new Error("fixture lost the result after dispatch");
+      if (uncertainCallIds.has(call.callId)) return { callId: call.callId, ok: false, content: "result uncertain", error: "uncertain", uncertain: true };
+      return { callId: call.callId, ok: true, content: `Result for ${call.capabilityId}` };
+    },
+    async close() {
+      closeCount++;
+    },
+  };
+}
+
+interface TestModelAdapter extends ModelAdapter {
   readonly requests: ModelGenerateRequest[];
 }
 
-function fakeModelAdapter(toolCalls?: ModelToolCall[], toolCallText = "I will use a tool"): FakeModelAdapter {
-  let callCount = 0;
+function testModelAdapter(
+  rounds: ReadonlyArray<ReadonlyArray<ModelEvent>>,
+  modelCapabilities: ModelCapabilities = supportedCapabilities,
+): TestModelAdapter {
   const requests: ModelGenerateRequest[] = [];
+  let round = 0;
   return {
-    providerId: "fake",
+    providerId: "fixture",
     requests,
     async discoverModels() {
-      return { default: "fake-model", options: [{ id: "fake-model", label: "Fake Model" }] };
+      return { default: "fixture-model", options: [{ id: "fixture-model", label: "Fixture Model" }] };
     },
     capabilities() {
-      return { tools: true, parallelTools: false, streaming: false, contextWindow: 128000, imageInput: false, imageOutput: false, structuredOutput: false };
+      return modelCapabilities;
     },
-    async generate(request: ModelGenerateRequest) {
+    async *generate(request) {
       requests.push(request);
-      callCount++;
-      if (toolCalls && callCount === 1) {
-        return { text: toolCallText, toolCalls, finishReason: "tool_calls" };
-      }
-      return { text: "Final answer after tool", toolCalls: [], finishReason: "stop" };
+      for (const event of rounds[round++] ?? []) yield event;
     },
   };
 }
 
-function fakeCapabilityRuntime(tools: string[] = []): CapabilityRuntime & { invocations: string[] } {
-  const invocations: string[] = [];
-  return {
-    list() {
-      return tools.map((name) => ({ id: name, name, description: `Tool ${name}`, schema: { type: "object" }, risk: "read" as const, sideEffect: false, timeoutMs: 10000 }));
-    },
-    async invoke(call: CapabilityCall) {
-      invocations.push(call.capabilityId);
-      return { callId: call.callId, ok: true, content: `Result for ${call.capabilityId}` };
-    },
-    async cancel(_callId) {},
-    invocations,
-  };
+function registryFor(adapter: ModelAdapter): ModelAdapterRegistry {
+  return { resolve: () => adapter };
+}
+
+class FixtureModelAdapterError extends Error implements ModelAdapterError {
+  readonly code: ModelAdapterError["code"];
+  readonly retryable: boolean;
+  readonly requestStarted: boolean;
+
+  constructor(
+    message: string,
+    code: ModelAdapterError["code"],
+    retryable: boolean,
+    requestStarted: boolean,
+  ) {
+    super(message);
+    this.code = code;
+    this.retryable = retryable;
+    this.requestStarted = requestStarted;
+  }
 }
 
 const grant: CapabilityGrant = {
   botId: "bot-1",
   threadId: "thread-1",
   approvalMode: "full",
-  allowed: new Set(),
+  allowed: new Set(["read-a", "read-b"]),
   denied: new Set(),
 };
 
+const userMessages: ReadonlyArray<ModelMessage> = [{ role: "system", content: "Use only the supplied fixture tools." }];
+
 describe("createAgentEngine", () => {
-  it("emits turn.started and resolves a run handle without a network call", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(() => { throw new Error("no network"); });
-    const engine = createAgentEngine();
+  it("runs two tool rounds and returns a final answer", async () => {
+    const modelAdapter = testModelAdapter([
+      [
+        { type: "tool_calls", calls: [{ id: "call-a", name: "read-a", arguments: { value: "a" } }] },
+        { type: "completed", finishReason: "tool_calls" },
+      ],
+      [
+        { type: "tool_calls", calls: [{ id: "call-b", name: "read-b", arguments: { value: "b" } }] },
+        { type: "completed", finishReason: "tool_calls" },
+      ],
+      [
+        { type: "content.delta", kind: "assistant_text", delta: "Both fixture values are verified." },
+        { type: "completed", finishReason: "stop" },
+      ],
+    ]);
+    const capabilities = testCapabilitySession([descriptor("read-a"), descriptor("read-b")]);
+    const store = testRunStore();
+    const engine = createAgentEngine({ adapters: registryFor(modelAdapter), store });
     const events: AgentEvent[] = [];
-    const unsub = engine.onEvent("thread-1", (e) => events.push(e));
+    const unsubscribe = engine.onEvent("thread-1", (event) => events.push(event));
+
     const { runId, done } = await engine.run({
       botId: "bot-1",
       threadId: "thread-1",
-      text: "hi",
-      providerModel: { providerId: "fake", modelId: "fake-model" },
-      modelAdapter: fakeModelAdapter(),
-      capabilityRuntime: fakeCapabilityRuntime(),
+      text: "Read two fixture values.",
+      messages: userMessages,
+      providerModel: { providerId: "fixture", modelId: "fixture-model" },
       grant,
+      capabilities,
       signal: new AbortController().signal,
     });
-    expect(runId).toBeTruthy();
     await done;
-    expect(events.some((e) => e.type === "run.started")).toBe(true);
-    expect(events.some((e) => e.type === "turn.completed")).toBe(true);
-    unsub();
-    fetchSpy.mockRestore();
+
+    expect(modelAdapter.requests).toHaveLength(3);
+    expect(modelAdapter.requests[1]?.messages).toContainEqual(expect.objectContaining({ role: "tool", toolCallId: "call-a" }));
+    expect(modelAdapter.requests[2]?.messages).toContainEqual(expect.objectContaining({ role: "tool", toolCallId: "call-b" }));
+    expect(capabilities.invocations).toEqual(["call-a", "call-b"]);
+    expect(store.getRun(runId)).toMatchObject({ status: "completed", modelRounds: 3, toolCalls: 2 });
+    expect(events.map((event) => event.type)).toEqual([
+      "run.started",
+      "tool.calls",
+      "tool.result",
+      "tool.calls",
+      "tool.result",
+      "model.delta",
+      "turn.completed",
+    ]);
+    expect(capabilities.closeCount).toBe(1);
+    unsubscribe();
   });
 
-  it("executes a multi-step tool call and returns a final answer", async () => {
-    const engine = createAgentEngine();
-    const events: AgentEvent[] = [];
-    const unsub = engine.onEvent("thread-1", (e) => events.push(e));
-    const capRuntime = fakeCapabilityRuntime(["read_file"]);
-    const modelAdapter = fakeModelAdapter([{ id: "call-1", name: "read_file", arguments: { path: "/tmp/test.txt" } }], "");
+  it("blocks unknown model tool capability before the first model request", async () => {
+    const unknownCapabilities: ModelCapabilities = { ...supportedCapabilities, tools: "unknown" };
+    const modelAdapter = testModelAdapter([], unknownCapabilities);
+    const capabilities = testCapabilitySession([descriptor("read-a")]);
+    const store = testRunStore();
+    const engine = createAgentEngine({ adapters: registryFor(modelAdapter), store });
+
     const { runId, done } = await engine.run({
       botId: "bot-1",
       threadId: "thread-1",
-      text: "read a file",
-      providerModel: { providerId: "fake", modelId: "fake-model" },
-      modelAdapter,
-      capabilityRuntime: capRuntime,
+      text: "Read a fixture value.",
+      messages: userMessages,
+      providerModel: { providerId: "fixture", modelId: "unknown-tools" },
       grant,
+      capabilities,
       signal: new AbortController().signal,
     });
     await done;
-    expect(runId).toBeTruthy();
-    expect(events.some((e) => e.type === "tool.calls")).toBe(true);
-    expect(events.some((e) => e.type === "tool.result")).toBe(true);
-    expect(events.some((e) => e.type === "turn.completed" && e.ok === true)).toBe(true);
-    expect(capRuntime.invocations).toContain("read_file");
-    expect(modelAdapter.requests[1]?.messages[1]).toMatchObject({
-      role: "assistant",
-      content: null,
-      toolCalls: [{ id: "call-1", name: "read_file" }],
-    });
-    expect(engine.getState(runId)).toMatchObject({ status: "completed", modelRounds: 2, toolCalls: 1 });
-    unsub();
+
+    expect(modelAdapter.requests).toHaveLength(0);
+    expect(capabilities.invocations).toEqual([]);
+    expect(store.getRun(runId)).toMatchObject({ status: "failed", failureCode: "unsupported_capability" });
   });
 
-  it("handles model returning no tools gracefully", async () => {
-    const engine = createAgentEngine();
-    const events: AgentEvent[] = [];
-    const unsub = engine.onEvent("thread-1", (e) => events.push(e));
-    const { done } = await engine.run({
+  it("rejects an invalid tool batch before any side effect", async () => {
+    const batches = [
+      {
+        calls: [
+          { id: "call-a", name: "read-a", arguments: { value: "a" } },
+          { id: "call-b", name: "read-b", arguments: { value: "b" } },
+        ],
+        invalidCallIds: new Set(["call-b"]),
+      },
+      {
+        calls: [
+          { id: "same-id", name: "read-a", arguments: { value: "a" } },
+          { id: "same-id", name: "read-b", arguments: { value: "b" } },
+        ],
+        invalidCallIds: new Set<string>(),
+      },
+      {
+        calls: Array.from({ length: 201 }, (_, index) => ({
+          id: `call-${index}`,
+          name: "read-a",
+          arguments: { value: String(index) },
+        })),
+        invalidCallIds: new Set<string>(),
+      },
+    ];
+
+    for (const batch of batches) {
+      const modelAdapter = testModelAdapter([[
+        { type: "tool_calls", calls: batch.calls },
+        { type: "completed", finishReason: "tool_calls" },
+      ]]);
+      const capabilities = testCapabilitySession([descriptor("read-a"), descriptor("read-b")], batch.invalidCallIds);
+      const store = testRunStore();
+      const engine = createAgentEngine({ adapters: registryFor(modelAdapter), store });
+      const { runId, done } = await engine.run({
+        botId: "bot-1",
+        threadId: "thread-1",
+        text: "Read fixture values.",
+        messages: userMessages,
+        providerModel: { providerId: "fixture", modelId: "fixture-model" },
+        grant,
+        capabilities,
+        signal: new AbortController().signal,
+      });
+      await done;
+
+      expect(capabilities.invocations).toEqual([]);
+      expect(store.getRun(runId)).toMatchObject({ status: "failed" });
+    }
+  });
+
+  it("retries a transient model error only before visible output", async () => {
+    const requests: ModelGenerateRequest[] = [];
+    let attempts = 0;
+    const modelAdapter: TestModelAdapter = {
+      ...testModelAdapter([]),
+      requests,
+      async *generate(request) {
+        requests.push(request);
+        attempts++;
+        if (attempts === 1) throw new FixtureModelAdapterError("temporary refusal", "transient", true, false);
+        yield { type: "content.delta", kind: "assistant_text", delta: "Recovered answer." };
+        yield { type: "completed", finishReason: "stop" };
+      },
+    };
+    const capabilities = testCapabilitySession([]);
+    const store = testRunStore();
+    const engine = createAgentEngine({ adapters: registryFor(modelAdapter), store });
+    const { runId, done } = await engine.run({
       botId: "bot-1",
       threadId: "thread-1",
-      text: "hello",
-      providerModel: { providerId: "fake", modelId: "fake-model" },
-      modelAdapter: fakeModelAdapter(),
-      capabilityRuntime: fakeCapabilityRuntime(),
+      text: "Answer safely.",
+      messages: userMessages,
+      providerModel: { providerId: "fixture", modelId: "fixture-model" },
       grant,
+      capabilities,
       signal: new AbortController().signal,
     });
     await done;
-    expect(events.some((e) => e.type === "turn.completed" && e.ok === true)).toBe(true);
-    unsub();
+
+    expect(requests).toHaveLength(2);
+    expect(store.getRun(runId)).toMatchObject({ status: "completed", modelRounds: 2 });
+  });
+
+  it("does not retry a transient model error after visible output", async () => {
+    const requests: ModelGenerateRequest[] = [];
+    const modelAdapter: TestModelAdapter = {
+      ...testModelAdapter([]),
+      requests,
+      async *generate(request) {
+        requests.push(request);
+        yield { type: "content.delta", kind: "assistant_text", delta: "Partial answer." };
+        throw new FixtureModelAdapterError("connection dropped", "transient", true, true);
+      },
+    };
+    const capabilities = testCapabilitySession([]);
+    const store = testRunStore();
+    const engine = createAgentEngine({ adapters: registryFor(modelAdapter), store });
+    const { runId, done } = await engine.run({
+      botId: "bot-1",
+      threadId: "thread-1",
+      text: "Answer safely.",
+      messages: userMessages,
+      providerModel: { providerId: "fixture", modelId: "fixture-model" },
+      grant,
+      capabilities,
+      signal: new AbortController().signal,
+    });
+    await done;
+
+    expect(requests).toHaveLength(1);
+    expect(store.getRun(runId)).toMatchObject({ status: "failed", modelRounds: 1 });
+  });
+
+  it("marks uncertain capability results recovery required without replay", async () => {
+    const modelAdapter = testModelAdapter([[
+      { type: "tool_calls", calls: [{ id: "call-uncertain", name: "read-a", arguments: { value: "a" } }] },
+      { type: "completed", finishReason: "tool_calls" },
+    ], [
+      { type: "content.delta", kind: "assistant_text", delta: "Do not repeat." },
+      { type: "completed", finishReason: "stop" },
+    ]]);
+    const capabilities = testCapabilitySession([descriptor("read-a")], new Set(), new Set(["call-uncertain"]));
+    const store = testRunStore();
+    const engine = createAgentEngine({ adapters: registryFor(modelAdapter), store });
+    const events: AgentEvent[] = [];
+    engine.onEvent("thread-1", (event) => events.push(event));
+
+    const { runId, done } = await engine.run({
+      botId: "bot-1",
+      threadId: "thread-1",
+      text: "Run the fixture operation once.",
+      messages: userMessages,
+      providerModel: { providerId: "fixture", modelId: "fixture-model" },
+      grant,
+      capabilities,
+      signal: new AbortController().signal,
+    });
+    await done;
+
+    expect(capabilities.invocations).toEqual(["call-uncertain"]);
+    expect(modelAdapter.requests).toHaveLength(1);
+    expect(store.calls.get(`${runId}:call-uncertain`)).toMatchObject({ status: "recovery_required" });
+    expect(store.getRun(runId)).toMatchObject({ status: "recovery_required" });
+    expect(events.some((event) => event.type === "run.recovery_required")).toBe(true);
+  });
+
+  it("fails closed when a dispatched capability throws", async () => {
+    const modelAdapter = testModelAdapter([[
+      { type: "tool_calls", calls: [{ id: "call-throws", name: "read-a", arguments: { value: "a" } }] },
+      { type: "completed", finishReason: "tool_calls" },
+    ], [
+      { type: "content.delta", kind: "assistant_text", delta: "Do not retry." },
+      { type: "completed", finishReason: "stop" },
+    ]]);
+    const capabilities = testCapabilitySession([descriptor("read-a")], new Set(), new Set(), new Set(["call-throws"]));
+    const store = testRunStore();
+    const engine = createAgentEngine({ adapters: registryFor(modelAdapter), store });
+    const { runId, done } = await engine.run({
+      botId: "bot-1",
+      threadId: "thread-1",
+      text: "Run the fixture operation once.",
+      messages: userMessages,
+      providerModel: { providerId: "fixture", modelId: "fixture-model" },
+      grant,
+      capabilities,
+      signal: new AbortController().signal,
+    });
+    await done;
+
+    expect(capabilities.invocations).toEqual(["call-throws"]);
+    expect(modelAdapter.requests).toHaveLength(1);
+    expect(store.calls.get(`${runId}:call-throws`)).toMatchObject({ status: "recovery_required" });
+    expect(store.getRun(runId)).toMatchObject({ status: "recovery_required" });
+  });
+
+  it("interrupts without retry after visible output", async () => {
+    let signalSeen: AbortSignal | undefined;
+    let deltaResolved!: () => void;
+    const deltaSeen = new Promise<void>((resolve) => { deltaResolved = resolve; });
+    const requests: ModelGenerateRequest[] = [];
+    const modelAdapter: TestModelAdapter = {
+      ...testModelAdapter([]),
+      requests,
+      async *generate(request) {
+        requests.push(request);
+        signalSeen = request.signal;
+        yield { type: "content.delta", kind: "assistant_text", delta: "Partial answer" };
+        deltaResolved();
+        await new Promise<void>((resolve) => request.signal.addEventListener("abort", () => resolve(), { once: true }));
+        request.signal.throwIfAborted();
+        yield { type: "completed", finishReason: "stop" };
+      },
+    };
+    const capabilities = testCapabilitySession([descriptor("read-a")]);
+    const store = testRunStore();
+    const engine = createAgentEngine({ adapters: registryFor(modelAdapter), store });
+    const { runId, done } = await engine.run({
+      botId: "bot-1",
+      threadId: "thread-1",
+      text: "Start a long answer.",
+      messages: userMessages,
+      providerModel: { providerId: "fixture", modelId: "fixture-model" },
+      grant,
+      capabilities,
+      signal: new AbortController().signal,
+    });
+    const completedBeforeDelta = await Promise.race([deltaSeen.then(() => false), done.then(() => true)]);
+    expect(completedBeforeDelta).toBe(false);
+    expect(signalSeen?.aborted).toBe(false);
+
+    await engine.interrupt(runId);
+    await done;
+
+    expect(requests).toHaveLength(1);
+    expect(store.getRun(runId)).toMatchObject({ status: "interrupted" });
+    expect(capabilities.invocations).toEqual([]);
+    expect(signalSeen?.aborted).toBe(true);
   });
 });

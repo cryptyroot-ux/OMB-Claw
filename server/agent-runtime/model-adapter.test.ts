@@ -1,51 +1,53 @@
 import { describe, expect, it } from "vitest";
 
 import { createOpenAICompatibleModelAdapter } from "./model-adapter.ts";
+import type { ModelEvent } from "./contracts.ts";
+
+const config = {
+  providerId: "test-provider",
+  apiUrl: "https://api.example.com/v1",
+  apiKey: "test-key",
+  defaultModel: "test-model",
+  supportsTools: true,
+  supportsStreaming: true,
+  contextWindow: 128_000,
+  imageInput: false,
+};
 
 describe("createOpenAICompatibleModelAdapter", () => {
-  it("discovers models and reports capabilities", async () => {
-    const adapter = createOpenAICompatibleModelAdapter({
-      providerId: "test-provider",
-      apiUrl: "https://api.example.com/v1",
-      apiKey: "test-key",
-      defaultModel: "test-model",
-      supportsTools: true,
-      supportsStreaming: true,
-      contextWindow: 128000,
-      imageInput: false,
-    });
+  it("discovers the configured model and reports explicit capabilities", async () => {
+    const adapter = createOpenAICompatibleModelAdapter(config);
 
     const catalog = await adapter.discoverModels();
     expect(catalog.default).toBe("test-model");
-    expect(catalog.options).toHaveLength(1);
+    expect(catalog.options.map((option) => option.id)).toEqual(["test-model"]);
 
-    const caps = adapter.capabilities("test-model");
-    expect(caps.tools).toBe(true);
-    expect(caps.streaming).toBe(true);
-    expect(caps.contextWindow).toBe(128000);
-    expect(caps.imageInput).toBe(false);
+    expect(adapter.capabilities("test-model")).toMatchObject({
+      tools: "supported",
+      parallelTools: "unknown",
+      streaming: "supported",
+      contextWindow: { status: "known", value: 128_000 },
+      imageInput: "unsupported",
+      structuredOutput: "unsupported",
+    });
   });
 
-  it("returns a stub response from generate", async () => {
-    const adapter = createOpenAICompatibleModelAdapter({
-      providerId: "test-provider",
-      apiUrl: "https://api.example.com/v1",
-      apiKey: "test-key",
-      defaultModel: "test-model",
-      supportsTools: true,
-      supportsStreaming: true,
-      contextWindow: 128000,
-      imageInput: false,
-    });
+  it("streams stub content and completion events", async () => {
+    const adapter = createOpenAICompatibleModelAdapter(config);
+    const events: ModelEvent[] = [];
 
-    const result = await adapter.generate({
+    for await (const event of adapter.generate({
       messages: [{ role: "user", content: "hello" }],
       model: "test-model",
       tools: [],
       signal: new AbortController().signal,
-    });
+    })) {
+      events.push(event);
+    }
 
-    expect(result.text).toBe("Stub response from OpenAI-compatible adapter");
-    expect(result.finishReason).toBe("stop");
+    expect(events).toEqual([
+      { type: "content.delta", kind: "assistant_text", delta: "Stub response from OpenAI-compatible adapter" },
+      { type: "completed", finishReason: "stop" },
+    ]);
   });
 });
