@@ -28,7 +28,7 @@ order.
 | Document | Purpose | Status |
 |---|---|---|
 | [`specs/2026-10-27-native-engine-external-research.md`](specs/2026-10-27-native-engine-external-research.md) | Claude Code, Codex, OpenCode, Hermes, Pi, Antigravity: context, tools, reliability, planning, eval; OMB gap table and P0–P2 roadmap | Complete |
-| [`specs/2026-10-27-omb-platform-independence-audit.md`](specs/2026-10-27-omb-platform-independence-audit.md) | Three-layer target (Agent Engine / Model Gateway / Capability Runtime), current-boundary audit, five-phase migration, independence proof | Proposed |
+| [`specs/2026-10-27-omb-platform-independence-audit.md`](specs/2026-10-27-omb-platform-independence-audit.md) | Three-layer target (Agent Engine / Model Gateway / Capability Runtime), current-boundary audit, five-phase migration, independence proof | Phase 1a complete; Phase 1b pending |
 
 ## 4. Verification recipes
 

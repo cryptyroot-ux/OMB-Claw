@@ -114,6 +114,15 @@ Acceptance: baseline recorded; no code behaviour change.
   loop is either deleted or kept behind an explicit compatibility flag, never the default.
 - Characterize every existing native test; all must pass.
 
+**Progress (2026-10-27):** Phase 1a complete. The native turn cycle — capability mounting, capability
+session, engine run, event bridge, steer handoff, approval close, and tool-process cleanup — now lives in
+`server/agent-runtime/turn-runtime.ts` (`runNativeTurn`). `openai-chat.ts` only admits the turn, creates
+the approval, and delegates. Native verification: agent-runtime 8 files / 59 tests; openai-chat suites
+10 files / 222 tests; native-only + openai-tools 4 tests; native-ui 1 test.
+
+Phase 1b (next): expose a `NativeTurnRuntime` on `ProviderInstance` and route `server/index.ts` /
+`QuickModelFallback` through it, so the index no longer calls `ProviderAdapter.sendTurn` for API drivers.
+
 Acceptance: `rg "nativeEngine.run" server/drivers` returns no driver-owned call; only `TurnRuntime`
 invokes the engine. `server/index.ts` calls `TurnRuntime`, not `ProviderAdapter.sendTurn`.
 
