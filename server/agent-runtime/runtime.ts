@@ -36,7 +36,7 @@ class AgentRuntimeError extends Error {
 function isModelAdapterError(error: unknown): error is ModelAdapterError {
   if (!(error instanceof Error)) return false;
   const candidate = error as ModelAdapterError;
-  return ["transient", "unsupported_capability", "unsupported_tools", "invalid_request", "terminal"].includes(candidate.code)
+  return ["transient", "unsupported_capability", "unsupported_tools", "request_too_large", "invalid_request", "terminal"].includes(candidate.code)
     && typeof candidate.retryable === "boolean"
     && typeof candidate.retrySafe === "boolean"
     && typeof candidate.requestStarted === "boolean";
@@ -55,6 +55,34 @@ function safeMessage(error: unknown): string {
 
 function modelEventFailure(message: string): AgentRuntimeError {
   return new AgentRuntimeError("invalid_model_response", message);
+}
+
+const OMITTED_IMAGE = "[image omitted to fit the provider's size limit]";
+const SHORT_TOOL_CHARS = 2_000;
+
+/** Keep the system prompt and the recent block; replace images with text and shorten tool outputs. Dropping older
+ * history never repeats a tool call, and the current turn's assistant/tool messages stay together. */
+function shrinkMessages(messages: readonly ModelMessage[], attempt: number): ModelMessage[] | null {
+  const system = messages.filter((message) => message.role === "system");
+  const rest = messages.filter((message) => message.role !== "system");
+  const lastUser = rest.findLastIndex((message) => message.role === "user");
+  if (lastUser < 0) return null;
+  const keepFrom = Math.max(0, lastUser - (attempt === 0 ? 8 : 2));
+  const dropped = keepFrom;
+  const kept = rest.slice(keepFrom).map((message) => {
+    const content = message.content;
+    if (content === null || content === undefined) return message;
+    const shrunk = Array.isArray(content)
+      ? content.map((part) => part.type === "image" ? { type: "text" as const, text: OMITTED_IMAGE } : part)
+      : message.role === "tool" && content.length > SHORT_TOOL_CHARS
+        ? `${content.slice(0, SHORT_TOOL_CHARS)}\n[tool output shortened to fit the provider's size limit]`
+        : content;
+    return { ...message, content: shrunk };
+  });
+  const note: ModelMessage[] = dropped > 0
+    ? [{ role: "assistant", content: `[${dropped} earlier message${dropped === 1 ? "" : "s"} omitted to fit the provider's size limit; the full history remains in the app.]` }]
+    : [];
+  return [...system, ...note, ...kept];
 }
 
 export function createAgentEngine(dependencies: {
@@ -153,6 +181,7 @@ export function createAgentEngine(dependencies: {
           const adapter = dependencies.adapters.resolve(request.providerModel);
           const modelCapabilities = adapter.capabilities(request.providerModel.modelId);
           let allowTools = true;
+          let sizeRetries = 0;
           while (modelRounds < MAX_MODEL_ROUNDS) {
             signal.throwIfAborted();
             if (control.steers.length) {
@@ -222,6 +251,20 @@ export function createAgentEngine(dependencies: {
                   if (offered.length > 0 && offered.every((tool) => tool.optional === true)) {
                     allowTools = false;
                     toolDescriptors = [];
+                    continue;
+                  }
+                }
+                if (
+                  isModelAdapterError(error)
+                  && error.code === "request_too_large"
+                  && sizeRetries < 2
+                  && !outputVisible
+                  && !signal.aborted
+                ) {
+                  const shrunk = shrinkMessages(messages, sizeRetries);
+                  if (shrunk) {
+                    messages.splice(0, messages.length, ...shrunk);
+                    sizeRetries++;
                     continue;
                   }
                 }

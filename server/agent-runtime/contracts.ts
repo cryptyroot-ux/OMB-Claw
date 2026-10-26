@@ -85,13 +85,15 @@ export type ModelEvent =
   | { readonly type: "usage"; readonly input: number; readonly output: number; readonly cachedInput?: number; readonly costUsd?: number }
   | { readonly type: "completed"; readonly finishReason: string | null };
 
-export type ModelAdapterErrorCode = "transient" | "unsupported_capability" | "unsupported_tools" | "invalid_request" | "terminal";
+export type ModelAdapterErrorCode = "transient" | "unsupported_capability" | "unsupported_tools" | "request_too_large" | "invalid_request" | "terminal";
 
 export interface ModelAdapterError extends Error {
   readonly code: ModelAdapterErrorCode;
   readonly retryable: boolean;
   readonly retrySafe: boolean;
   readonly requestStarted: boolean;
+  /** Present for `request_too_large`: the rejected request's encoded size. */
+  readonly bytes?: number;
 }
 
 export interface ModelAdapter {

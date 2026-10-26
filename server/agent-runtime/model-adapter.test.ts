@@ -265,6 +265,23 @@ describe("createOpenAICompatibleModelAdapter", () => {
     expect(error).toMatchObject({ code: "invalid_request", retryable: false, retrySafe: false, requestStarted: false });
   });
 
+  it("classifies an oversized request with its encoded size", async () => {
+    const f = await fixture((_request, response) => {
+      response.writeHead(413, { "content-type": "text/plain" });
+      response.end("Payload Too Large");
+    });
+    const error = await failure(adapter(f.origin).generate({
+      messages: [{ role: "user", content: "hello" }],
+      model: "fixture-model",
+      tools: [],
+      signal: new AbortController().signal,
+    }));
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toMatchObject({ code: "request_too_large", retryable: false, retrySafe: false, requestStarted: false });
+    expect(error.bytes).toBeGreaterThan(0);
+  });
+
   it("classifies a provider that rejects the tools parameter", async () => {
     const f = await fixture((_request, response) => json(response, {
       error: { message: "tools are not supported", param: "tools", code: "unsupported_parameter" },

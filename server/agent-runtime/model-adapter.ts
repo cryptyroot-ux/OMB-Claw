@@ -11,6 +11,7 @@ import type {
   ModelToolCall,
 } from "./contracts.ts";
 import { rejectsToolsParameter } from "../tool-rejection.ts";
+import { refusesRequestSize } from "../request-size.ts";
 
 export interface OpenAICompatibleModelAdapterConfig {
   providerId: string;
@@ -63,6 +64,7 @@ class OpenAICompatibleAdapterError extends Error implements ModelAdapterError {
   readonly retryable: boolean;
   readonly retrySafe: boolean;
   readonly requestStarted: boolean;
+  readonly bytes?: number;
 
   constructor(
     message: string,
@@ -70,6 +72,7 @@ class OpenAICompatibleAdapterError extends Error implements ModelAdapterError {
     retryable: boolean,
     retrySafe: boolean,
     requestStarted: boolean,
+    bytes?: number,
   ) {
     super(message);
     this.name = "OpenAICompatibleAdapterError";
@@ -77,6 +80,7 @@ class OpenAICompatibleAdapterError extends Error implements ModelAdapterError {
     this.retryable = retryable;
     this.retrySafe = retrySafe;
     this.requestStarted = requestStarted;
+    this.bytes = bytes;
   }
 }
 
@@ -233,6 +237,12 @@ export function createOpenAICompatibleModelAdapter(config: OpenAICompatibleModel
 
       try {
         let response: Response;
+        const payload = JSON.stringify({
+          model: request.model,
+          messages: wireMessages(request.messages),
+          stream,
+          ...(request.tools.length ? { tools: wireTools(request.tools) } : {}),
+        });
         try {
           response = await fetcher(`${config.apiUrl.replace(/\/+$/, "")}/chat/completions`, {
             method: "POST",
@@ -240,12 +250,7 @@ export function createOpenAICompatibleModelAdapter(config: OpenAICompatibleModel
               authorization: `Bearer ${config.apiKey}`,
               "content-type": "application/json",
             },
-            body: JSON.stringify({
-              model: request.model,
-              messages: wireMessages(request.messages),
-              stream,
-              ...(request.tools.length ? { tools: wireTools(request.tools) } : {}),
-            }),
+            body: payload,
             signal,
           });
         } catch {
@@ -266,19 +271,27 @@ export function createOpenAICompatibleModelAdapter(config: OpenAICompatibleModel
           const detail = await response.text().catch(() => "");
           const transient = response.status === 408 || response.status === 429 || response.status >= 500;
           const toolsRejected = !transient && rejectsToolsParameter(response.status, detail);
+          const tooLarge = !transient && !toolsRejected && refusesRequestSize(response.status, detail);
           const code: ModelAdapterErrorCode = toolsRejected
             ? "unsupported_tools"
-            : transient
-              ? "transient"
-              : response.status === 400 || response.status === 422
-                ? "invalid_request"
-                : "terminal";
+            : tooLarge
+              ? "request_too_large"
+              : transient
+                ? "transient"
+                : response.status === 400 || response.status === 422
+                  ? "invalid_request"
+                  : "terminal";
           throw new OpenAICompatibleAdapterError(
-            toolsRejected ? "The model provider does not support tools" : `Model provider returned HTTP ${response.status}`,
+            toolsRejected
+              ? "The model provider does not support tools"
+              : tooLarge
+                ? "The model request exceeded the provider's size limit"
+                : `Model provider returned HTTP ${response.status}`,
             code,
             transient,
             transient && !emitted,
             emitted,
+            tooLarge ? Buffer.byteLength(payload) : undefined,
           );
         }
 

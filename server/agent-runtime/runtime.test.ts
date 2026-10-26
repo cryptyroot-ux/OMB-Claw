@@ -704,6 +704,86 @@ describe("createAgentEngine", () => {
     expect(store.getRun(handle.runId)).toMatchObject({ status: "failed", failureCode: "unsupported_tools" });
   });
 
+  it("shrinks history once when the provider rejects the request size", async () => {
+    const requests: ModelGenerateRequest[] = [];
+    const history: ModelMessage[] = [
+      { role: "system", content: "system prompt" },
+      ...Array.from({ length: 12 }, (_, index) => ({
+        role: index % 2 ? "assistant" as const : "user" as const,
+        content: `old message ${index}`,
+      })),
+      { role: "user", content: [{ type: "text", text: "old image" }, { type: "image", mimeType: "image/png", data: "x" }] },
+      { role: "assistant", content: null, toolCalls: [{ id: "call-old", name: "read-a", arguments: { value: "a" } }] },
+      { role: "tool", content: "x".repeat(5_000), toolCallId: "call-old" },
+    ];
+    const modelAdapter: TestModelAdapter = {
+      ...testModelAdapter([]),
+      requests,
+      async *generate(request) {
+        requests.push({ ...request, messages: [...request.messages] });
+        if (requests.length === 1) {
+          throw new FixtureModelAdapterError("too large", "request_too_large", false, false, false);
+        }
+        yield { type: "content.delta", kind: "assistant_text", delta: "Done after shrinking." };
+        yield { type: "completed", finishReason: "stop" };
+      },
+    };
+    const store = testRunStore();
+    const engine = createAgentEngine({ adapters: registryFor(modelAdapter), store });
+
+    const handle = await engine.run({
+      botId: "bot-1",
+      threadId: "thread-1",
+      text: "Continue.",
+      messages: history,
+      providerModel: { providerId: "fixture", modelId: "fixture-model" },
+      grant,
+      capabilities: testCapabilitySession([descriptor("read-a")]),
+      signal: new AbortController().signal,
+    });
+    await handle.done;
+
+    expect(requests).toHaveLength(2);
+    expect(requests[1]!.messages.length).toBeLessThan(requests[0]!.messages.length);
+    expect(requests[1]!.messages.some((message) => Array.isArray(message.content) && message.content.some((part) => part.type === "image"))).toBe(false);
+    const tool = requests[1]!.messages.find((message) => message.role === "tool");
+    const toolText = typeof tool?.content === "string" ? tool.content : "";
+    expect(toolText.length).toBeLessThan(2_100);
+    expect(store.getRun(handle.runId)).toMatchObject({ status: "completed" });
+  });
+
+  it("fails with a clear code when the request stays too large", async () => {
+    const requests: ModelGenerateRequest[] = [];
+    const modelAdapter: TestModelAdapter = {
+      ...testModelAdapter([]),
+      requests,
+      async *generate(request) {
+        requests.push(request);
+        if (requests.length > 0) {
+          throw new FixtureModelAdapterError("too large", "request_too_large", false, false, false);
+        }
+        yield { type: "completed", finishReason: "stop" };
+      },
+    };
+    const store = testRunStore();
+    const engine = createAgentEngine({ adapters: registryFor(modelAdapter), store });
+
+    const handle = await engine.run({
+      botId: "bot-1",
+      threadId: "thread-1",
+      text: "Continue.",
+      messages: userMessages,
+      providerModel: { providerId: "fixture", modelId: "fixture-model" },
+      grant,
+      capabilities: testCapabilitySession([descriptor("read-a")]),
+      signal: new AbortController().signal,
+    });
+    await handle.done;
+
+    expect(requests).toHaveLength(3);
+    expect(store.getRun(handle.runId)).toMatchObject({ status: "failed", failureCode: "request_too_large" });
+  });
+
   it("steers a running turn before the next round and refuses after it finishes", async () => {
     let entered!: () => void;
     const started = new Promise<void>((resolve) => { entered = resolve; });
