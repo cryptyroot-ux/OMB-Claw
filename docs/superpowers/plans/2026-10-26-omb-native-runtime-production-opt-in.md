@@ -60,5 +60,8 @@
 
 - [x] Run `pnpm vitest run server/agent-runtime/ server/drivers/openai-chat-tools.test.ts server/drivers/openai-chat.test.ts server/drivers/openai-chat-protocol.test.ts server/drivers/chat-tool-approval.test.ts` → 12 files / 230 tests passed.
 - [x] Run `pnpm typecheck` and `pnpm lint` → passed.
+- [x] Run the full isolated server fixture `server/native-only.e2e.test.ts` → 1/1 passed: real loopback provider, real MCP tool, real approval card, settled turn, artifact written, `agent_runs` completed with 2 rounds/1 call, and `claude` not available.
 - [x] Commit locally.
 - [x] Report full-suite status as not green; push only with approval.
+
+**Known gap:** `server/openai-tools.e2e.test.ts` still asserts the legacy OpenAI-compatible loop and fails its request-count assumptions under native execution. It needs a native-aware replacement/update; the focused native-only fixture is the current proof.
