@@ -235,4 +235,4 @@ The milestone is complete only when all five tasks' focused tests and typecheck 
 
 ## Milestone status
 
-Implemented and committed. Final focused verification: 10 test files / 226 tests passed, `pnpm typecheck` passed. A fresh review found one Critical and nine Important issues; all were fixed in one test-first pass, with two Minor findings deferred (batch item-pending display and missing journal result summaries). The repo-wide `pnpm test` remains not green and was not rerun for this milestone.
+Implemented and committed. Final focused verification after the review fix pass: 10 test files / 226 tests passed, `pnpm typecheck` passed. A fresh review found one Critical and nine Important issues; all were fixed in one test-first pass, with two Minor findings deferred (batch item-pending display and missing journal result summaries). Final fixes are in `ef8c19f`. The repo-wide `pnpm test` remains not green and was not rerun for this milestone.
