@@ -1,11 +1,10 @@
-# OMB Native Runtime — Research, Design, and Planning Index
+# OMB Claw — Research, Design, and Planning Index
 
 Last updated: 2026-10-27
-Repo: <https://github.com/cryptyroot-ux/OMB-native-runtime>
+Repo: <https://github.com/cryptyroot-ux/OMB-Claw>
 Branch: `feature/native-agent-engine` (mirrored to `main`)
 
-This is the entry point for the native-runtime work. The documents are grouped by purpose and listed in reading
-order.
+This is the entry point for OMB Claw architecture and delivery work. The documents are grouped by purpose and listed in reading order.
 
 ## 1. Design and acceptance
 
