@@ -704,7 +704,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 });
                 break;
               case "turn.completed":
-                finish(event.ok, event.ok ? null : event.stopReason ?? "error");
+                finish(event.ok, event.stopReason ?? null);
                 break;
               case "run.failed":
                 finish(false, "error", event.message);
@@ -1082,6 +1082,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       steer: async (threadId, text) => {
         const running = active.get(threadId);
         if (!running) return "refused";
+        if (options.nativeAgentEngine) return "refused";
         running.asides.push(text);
         return "steered";
       },

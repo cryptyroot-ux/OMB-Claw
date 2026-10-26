@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createChatCapabilitySession } from "./chat-capability-runtime.ts";
 import type { ChatToolDefinition, ChatToolSession } from "../drivers/chat-mcp-tools.ts";
 import type { CapabilityCall, CapabilityGrant } from "./contracts.ts";
+import { ASK_USER_TOOL, ASK_USER_TOOL_DEFINITION } from "../../shared/ask-question.ts";
 
 const definition = (name: string): ChatToolDefinition => ({
   type: "function",
@@ -49,7 +50,7 @@ function approval(allowed: boolean) {
   return {
     floored: vi.fn(() => null),
     ask: vi.fn(async () => allowed),
-    question: vi.fn(async () => null),
+    question: vi.fn(async (): Promise<string | null> => null),
   };
 }
 
@@ -115,6 +116,43 @@ describe("createChatCapabilitySession", () => {
 
     expect(result).toMatchObject({ ok: false, error: "closed" });
     expect(session.closed).toBe(1);
+    expect(session.executed).toEqual([]);
+  });
+
+  it("marks a thrown post-dispatch session failure uncertain", async () => {
+    const session = fakeSession({
+      execute: async () => { throw new Error("MCP timeout after dispatch"); },
+    });
+    const bridge = createChatCapabilitySession({ session, approval: approval(true) });
+
+    const result = await bridge.invoke(call("c1", "read_file"), { grant: grant(), signal: new AbortController().signal });
+
+    expect(result).toMatchObject({ ok: false, uncertain: true, error: "uncertain_side_effect" });
+  });
+
+  it("validates ask_user without a chat-session registration", () => {
+    const validate = vi.fn(() => { throw new Error("chat session must not validate ask_user"); });
+    const session = fakeSession({ definitions: [ASK_USER_TOOL_DEFINITION], validate });
+    const bridge = createChatCapabilitySession({ session, approval: approval(true) });
+    const ask = call("c1", ASK_USER_TOOL);
+    (ask as { arguments: unknown }).arguments = { questions: [{ question: "Ship it?", options: [{ label: "Yes" }, { label: "No" }] }] };
+
+    expect(() => bridge.validate(ask, grant())).not.toThrow();
+    expect(validate).not.toHaveBeenCalled();
+  });
+
+  it("routes ask_user through the question approval without executing a tool", async () => {
+    const session = fakeSession({ definitions: [ASK_USER_TOOL_DEFINITION] });
+    const gate = approval(true);
+    gate.question.mockResolvedValueOnce("Yes");
+    const bridge = createChatCapabilitySession({ session, approval: gate });
+    const ask = call("c1", ASK_USER_TOOL);
+    (ask as { arguments: unknown }).arguments = { questions: [{ question: "Ship it?", options: [{ label: "Yes" }, { label: "No" }] }] };
+
+    const result = await bridge.invoke(ask, { grant: grant(), signal: new AbortController().signal });
+
+    expect(result).toMatchObject({ ok: true, content: "Yes" });
+    expect(gate.question).toHaveBeenCalledOnce();
     expect(session.executed).toEqual([]);
   });
 });

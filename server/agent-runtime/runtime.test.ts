@@ -91,6 +91,7 @@ function testCapabilitySession(
   invalidCallIds: ReadonlySet<string> = new Set(),
   uncertainCallIds: ReadonlySet<string> = new Set(),
   throwingCallIds: ReadonlySet<string> = new Set(),
+  imageCallIds: ReadonlySet<string> = new Set(),
 ): TestCapabilitySession {
   const validations: string[] = [];
   const invocations: string[] = [];
@@ -115,6 +116,7 @@ function testCapabilitySession(
       invocations.push(call.callId);
       if (throwingCallIds.has(call.callId)) throw new Error("fixture lost the result after dispatch");
       if (uncertainCallIds.has(call.callId)) return { callId: call.callId, ok: false, content: "result uncertain", error: "uncertain", uncertain: true };
+      if (imageCallIds.has(call.callId)) return { callId: call.callId, ok: true, content: "Screenshot captured", images: [{ mimeType: "image/png", data: "fixture" }] };
       return { callId: call.callId, ok: true, content: `Result for ${call.capabilityId}` };
     },
     async close() {
@@ -156,17 +158,20 @@ function registryFor(adapter: ModelAdapter): ModelAdapterRegistry {
 class FixtureModelAdapterError extends Error implements ModelAdapterError {
   readonly code: ModelAdapterError["code"];
   readonly retryable: boolean;
+  readonly retrySafe: boolean;
   readonly requestStarted: boolean;
 
   constructor(
     message: string,
     code: ModelAdapterError["code"],
     retryable: boolean,
+    retrySafe: boolean,
     requestStarted: boolean,
   ) {
     super(message);
     this.code = code;
     this.retryable = retryable;
+    this.retrySafe = retrySafe;
     this.requestStarted = requestStarted;
   }
 }
@@ -317,7 +322,7 @@ describe("createAgentEngine", () => {
       async *generate(request) {
         requests.push(request);
         attempts++;
-        if (attempts === 1) throw new FixtureModelAdapterError("temporary refusal", "transient", true, false);
+        if (attempts === 1) throw new FixtureModelAdapterError("temporary refusal", "transient", true, true, false);
         yield { type: "content.delta", kind: "assistant_text", delta: "Recovered answer." };
         yield { type: "completed", finishReason: "stop" };
       },
@@ -349,7 +354,7 @@ describe("createAgentEngine", () => {
       async *generate(request) {
         requests.push(request);
         yield { type: "content.delta", kind: "assistant_text", delta: "Partial answer." };
-        throw new FixtureModelAdapterError("connection dropped", "transient", true, true);
+        throw new FixtureModelAdapterError("connection dropped", "transient", true, false, true);
       },
     };
     const capabilities = testCapabilitySession([]);
@@ -369,6 +374,41 @@ describe("createAgentEngine", () => {
 
     expect(requests).toHaveLength(1);
     expect(store.getRun(runId)).toMatchObject({ status: "failed", modelRounds: 1 });
+  });
+
+  it("stops before retry when interrupted during backoff", async () => {
+    let notifyStarted!: () => void;
+    const started = new Promise<void>((resolve) => { notifyStarted = resolve; });
+    let requests = 0;
+    const modelAdapter: TestModelAdapter = {
+      ...testModelAdapter([]),
+      requests: [],
+      async *generate(request) {
+        requests++;
+        request.signal.throwIfAborted();
+        notifyStarted();
+        throw new FixtureModelAdapterError("temporary refusal", "transient", true, true, false);
+      },
+    };
+    const capabilities = testCapabilitySession([]);
+    const store = testRunStore();
+    const engine = createAgentEngine({ adapters: registryFor(modelAdapter), store });
+    const { runId, done } = await engine.run({
+      botId: "bot-1",
+      threadId: "thread-1",
+      text: "Answer safely.",
+      messages: userMessages,
+      providerModel: { providerId: "fixture", modelId: "fixture-model" },
+      grant,
+      capabilities,
+      signal: new AbortController().signal,
+    });
+    await started;
+    await engine.interrupt(runId);
+    await done;
+
+    expect(requests).toBe(1);
+    expect(store.getRun(runId)).toMatchObject({ status: "interrupted" });
   });
 
   it("marks uncertain capability results recovery required without replay", async () => {
@@ -431,6 +471,33 @@ describe("createAgentEngine", () => {
     expect(modelAdapter.requests).toHaveLength(1);
     expect(store.calls.get(`${runId}:call-throws`)).toMatchObject({ status: "recovery_required" });
     expect(store.getRun(runId)).toMatchObject({ status: "recovery_required" });
+  });
+
+  it("fails closed when a capability returns images the model cannot receive", async () => {
+    const modelAdapter = testModelAdapter([[
+      { type: "tool_calls", calls: [{ id: "call-image", name: "read-a", arguments: { value: "a" } }] },
+      { type: "completed", finishReason: "tool_calls" },
+    ], [
+      { type: "content.delta", kind: "assistant_text", delta: "Should not run." },
+      { type: "completed", finishReason: "stop" },
+    ]]);
+    const capabilities = testCapabilitySession([descriptor("read-a")], new Set(), new Set(), new Set(), new Set(["call-image"]));
+    const store = testRunStore();
+    const engine = createAgentEngine({ adapters: registryFor(modelAdapter), store });
+    const { runId, done } = await engine.run({
+      botId: "bot-1",
+      threadId: "thread-1",
+      text: "Take a screenshot.",
+      messages: userMessages,
+      providerModel: { providerId: "fixture", modelId: "fixture-model" },
+      grant,
+      capabilities,
+      signal: new AbortController().signal,
+    });
+    await done;
+
+    expect(modelAdapter.requests).toHaveLength(1);
+    expect(store.getRun(runId)).toMatchObject({ status: "failed", failureCode: "unsupported_capability" });
   });
 
   it("interrupts without retry after visible output", async () => {

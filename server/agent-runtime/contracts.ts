@@ -85,6 +85,7 @@ export type ModelAdapterErrorCode = "transient" | "unsupported_capability" | "in
 export interface ModelAdapterError extends Error {
   readonly code: ModelAdapterErrorCode;
   readonly retryable: boolean;
+  readonly retrySafe: boolean;
   readonly requestStarted: boolean;
 }
 

@@ -232,3 +232,7 @@ Commit with `feat: add native Agent Runtime ProviderAdapter path`.
 ## Completion gate
 
 The milestone is complete only when all five tasks' focused tests and typecheck pass, the ProviderAdapter-level local-HTTP acceptance test shows ordered multi-step tool execution and zero agent-CLI launches, SQLite recovery marks uncertain calls fail-closed, and no existing bot/default configuration changes. The optional live API smoke, UI engine selector, other provider protocols, remaining capability families, canary, push, and deployment remain out of scope pending separate approval.
+
+## Milestone status
+
+Implemented and committed. Final focused verification: 10 test files / 226 tests passed, `pnpm typecheck` passed. A fresh review found one Critical and nine Important issues; all were fixed in one test-first pass, with two Minor findings deferred (batch item-pending display and missing journal result summaries). The repo-wide `pnpm test` remains not green and was not rerun for this milestone.

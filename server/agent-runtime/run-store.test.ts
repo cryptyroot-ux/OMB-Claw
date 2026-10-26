@@ -49,7 +49,7 @@ describe("createSqliteAgentRunStore", () => {
     });
   });
 
-  it("marks in-flight capability calls recovery required without replaying them", () => {
+  it("marks in-flight capability calls recovery required on store reopen", () => {
     const store = createSqliteAgentRunStore();
     store.createRun(run("run-2"));
     store.beginCapabilityCall({
@@ -61,27 +61,28 @@ describe("createSqliteAgentRunStore", () => {
       startedAt: 2_000,
     });
 
-    store.recoverUnsettledRuns(3_000);
+    closeMessageDb();
+    const reopened = createSqliteAgentRunStore();
+    const recovered = readAgentCapabilityCall("run-2", "call-1");
 
-    expect(store.getRun("run-2")).toMatchObject({ status: "recovery_required", failureCode: "uncertain_side_effect" });
+    expect(reopened.getRun("run-2")).toMatchObject({ status: "recovery_required", failureCode: "uncertain_side_effect" });
+    expect(recovered).toMatchObject({ status: "recovery_required" });
+    expect(recovered?.settledAt).toEqual(expect.any(Number));
+
+    reopened.recoverUnsettledRuns(4_000);
     expect(readAgentCapabilityCall("run-2", "call-1")).toMatchObject({
       status: "recovery_required",
-      settledAt: 3_000,
-    });
-
-    store.recoverUnsettledRuns(4_000);
-    expect(readAgentCapabilityCall("run-2", "call-1")).toMatchObject({
-      status: "recovery_required",
-      settledAt: 3_000,
+      settledAt: recovered?.settledAt,
     });
   });
 
-  it("marks an orphaned model run interrupted when no capability was in flight", () => {
+  it("marks an orphaned model run interrupted on store reopen", () => {
     const store = createSqliteAgentRunStore();
     store.createRun(run("run-3"));
 
-    store.recoverUnsettledRuns(5_000);
+    closeMessageDb();
+    const reopened = createSqliteAgentRunStore();
 
-    expect(store.getRun("run-3")).toMatchObject({ status: "interrupted", failureCode: "process_restarted" });
+    expect(reopened.getRun("run-3")).toMatchObject({ status: "interrupted", failureCode: "process_restarted" });
   });
 });

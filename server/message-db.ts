@@ -265,8 +265,8 @@ export interface ChatFollowup {
   payload: FollowupPayload;
 }
 
-/** A 202/cancel/dispatch claim must reach disk (FULL sync) before its result is published. */
-function writeFollowups(write: (connection: DatabaseSync) => void): void {
+/** A dispatch or cancellation claim must reach disk (FULL sync) before its result is published. */
+function writeDurable(write: (connection: DatabaseSync) => void): void {
   const connection = db();
   connection.exec("PRAGMA synchronous = FULL");
   try {
@@ -274,6 +274,10 @@ function writeFollowups(write: (connection: DatabaseSync) => void): void {
     try { write(connection); connection.exec("COMMIT"); }
     catch (error) { connection.exec("ROLLBACK"); throw error; }
   } finally { connection.exec("PRAGMA synchronous = NORMAL"); }
+}
+
+function writeFollowups(write: (connection: DatabaseSync) => void): void {
+  writeDurable(write);
 }
 
 export interface StoredCommandReceipt {
@@ -625,20 +629,22 @@ export function transitionAgentRun(
 }
 
 export function insertAgentCapabilityCall(record: AgentCapabilityCallRecord): void {
-  db()
-    .prepare(
-      "INSERT INTO agent_capability_calls(run_id, call_id, capability_id, risk, status, started_at, settled_at) " +
-      "VALUES (?, ?, ?, ?, ?, ?, ?)",
-    )
-    .run(
-      record.runId,
-      record.callId,
-      record.capabilityId,
-      record.risk,
-      record.status,
-      record.startedAt,
-      record.settledAt ?? null,
-    );
+  writeDurable((database) => {
+    database
+      .prepare(
+        "INSERT INTO agent_capability_calls(run_id, call_id, capability_id, risk, status, started_at, settled_at) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        record.runId,
+        record.callId,
+        record.capabilityId,
+        record.risk,
+        record.status,
+        record.startedAt,
+        record.settledAt ?? null,
+      );
+  });
 }
 
 export function updateAgentCapabilityCall(

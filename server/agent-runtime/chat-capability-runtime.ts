@@ -97,6 +97,10 @@ export function createChatCapabilitySession({
     validate(call: CapabilityCall, grant: CapabilityGrant): void {
       assertOpen();
       assertPermitted(call.capabilityId, grant);
+      if (call.capabilityId === ASK_USER_TOOL) {
+        if (!parseAskQuestions(call.arguments)) throw new Error("The ask_user arguments are malformed");
+        return;
+      }
       session.validate(call.capabilityId, call.arguments);
     },
 
@@ -114,6 +118,7 @@ export function createChatCapabilitySession({
         return { callId: call.callId, ok: false, content: `Capability denied: ${call.capabilityId}`, error: "denied" };
       }
 
+      let dispatched = false;
       try {
         context.signal.throwIfAborted();
         if (call.capabilityId === ASK_USER_TOOL) {
@@ -156,6 +161,7 @@ export function createChatCapabilitySession({
           };
         }
 
+        dispatched = true;
         const result = await session.execute(call.capabilityId, call.arguments as Record<string, unknown>, context.signal);
         const images = capabilityImages(result.images);
         const omitted = result.images?.length && !images ? "\n[image omitted: unsupported image transport]" : "";
@@ -174,6 +180,15 @@ export function createChatCapabilitySession({
             content: "Tool interrupted; an operation already dispatched may have taken effect. Verify its state before retrying.",
             uncertain: true,
             error: "interrupted",
+          };
+        }
+        if (dispatched) {
+          return {
+            callId: call.callId,
+            ok: false,
+            content: "The tool failed after dispatch; its outcome may be uncertain. Inspect its state before retrying.",
+            uncertain: true,
+            error: "uncertain_side_effect",
           };
         }
         return {

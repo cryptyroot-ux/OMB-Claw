@@ -34,6 +34,7 @@ function isModelAdapterError(error: unknown): error is ModelAdapterError {
   const candidate = error as ModelAdapterError;
   return ["transient", "unsupported_capability", "invalid_request", "terminal"].includes(candidate.code)
     && typeof candidate.retryable === "boolean"
+    && typeof candidate.retrySafe === "boolean"
     && typeof candidate.requestStarted === "boolean";
 }
 
@@ -142,6 +143,7 @@ export function createAgentEngine(dependencies: {
             let attempt = 0;
 
             for (;;) {
+              signal.throwIfAborted();
               responseText = "";
               responseCalls = [];
               finishReason = null;
@@ -184,6 +186,7 @@ export function createAgentEngine(dependencies: {
                 const canRetry = isModelAdapterError(error)
                   && error.code === "transient"
                   && error.retryable
+                  && error.retrySafe
                   && !error.requestStarted
                   && !outputVisible
                   && !capabilityDispatched
@@ -260,6 +263,9 @@ export function createAgentEngine(dependencies: {
                 dependencies.store.settleCapabilityCall(runId, call.callId, result.ok ? "succeeded" : "failed", Date.now());
                 if (!result.ok) capabilityFailure = true;
                 emit(request.threadId, { type: "tool.result", runId, callId: call.callId, result });
+                if (result.images?.length && modelCapabilities.imageInput !== "supported") {
+                  throw new AgentRuntimeError("unsupported_capability", "The capability returned an image result the selected model cannot receive");
+                }
                 messages.push({ role: "tool", content: JSON.stringify({ ok: result.ok, result: result.content }), toolCallId: call.callId });
               }
               continue;

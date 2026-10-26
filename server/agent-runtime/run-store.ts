@@ -15,7 +15,8 @@ import type {
   CapabilityCallStatus,
 } from "./contracts.ts";
 
-export function createSqliteAgentRunStore(): AgentRunStore {
+export function createSqliteAgentRunStore(options: { recoverAt?: number } = {}): AgentRunStore {
+  recoverUnsettledAgentRuns(options.recoverAt ?? Date.now());
   return {
     createRun(record: AgentRunRecord): void {
       insertAgentRun(record);

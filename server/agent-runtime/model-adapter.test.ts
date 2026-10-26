@@ -68,13 +68,14 @@ function sse(response: ServerResponse, chunks: unknown[]): void {
   response.end("data: [DONE]\n\n");
 }
 
-function adapter(origin: string, streaming: CapabilitySupport = "supported") {
+function adapter(origin: string, streaming: CapabilitySupport = "supported", reasoning = false) {
   return createOpenAICompatibleModelAdapter({
     providerId: "fixture",
     apiUrl: `${origin}/v1`,
     apiKey: "fixture-secret",
     catalog,
     capabilities: () => capabilities("supported", streaming),
+    reasoning,
   });
 }
 
@@ -82,6 +83,15 @@ async function collect(iterable: AsyncIterable<ModelEvent>): Promise<ModelEvent[
   const events: ModelEvent[] = [];
   for await (const event of iterable) events.push(event);
   return events;
+}
+
+async function failure(iterable: AsyncIterable<ModelEvent>): Promise<ModelAdapterError> {
+  try {
+    await collect(iterable);
+  } catch (error) {
+    return error as ModelAdapterError;
+  }
+  throw new Error("Expected the adapter to fail");
 }
 
 describe("createOpenAICompatibleModelAdapter", () => {
@@ -170,29 +180,84 @@ describe("createOpenAICompatibleModelAdapter", () => {
   it("classifies 429 and 5xx as transient before output", async () => {
     for (const status of [429, 503]) {
       const f = await fixture((_request, response) => json(response, { error: "temporary" }, status));
-      const error = await collect(adapter(f.origin).generate({
+      const error = await failure(adapter(f.origin).generate({
         messages: [{ role: "user", content: "hello" }],
         model: "fixture-model",
         tools: [],
         signal: new AbortController().signal,
-      })).catch((value: unknown) => value as ModelAdapterError);
+      }));
 
       expect(error).toBeInstanceOf(Error);
-      expect(error).toMatchObject({ code: "transient", retryable: true, requestStarted: false });
+      expect(error).toMatchObject({ code: "transient", retryable: true, retrySafe: true, requestStarted: false });
     }
   });
 
-  it("classifies an invalid request as non-retryable", async () => {
-    const f = await fixture((_request, response) => json(response, { error: "bad request" }, 400));
-    const error = await collect(adapter(f.origin).generate({
+  it("does not include a provider response body in the error", async () => {
+    const f = await fixture((_request, response) => json(response, { secret: "fixture-secret-value" }, 500));
+    const error = await failure(adapter(f.origin).generate({
       messages: [{ role: "user", content: "hello" }],
       model: "fixture-model",
       tools: [],
       signal: new AbortController().signal,
-    })).catch((value: unknown) => value as ModelAdapterError);
+    }));
 
     expect(error).toBeInstanceOf(Error);
-    expect(error).toMatchObject({ code: "invalid_request", retryable: false, requestStarted: false });
+    expect(error.message).not.toContain("fixture-secret-value");
+    expect(error.message).not.toContain("secret");
+  });
+
+  it("classifies an unreadable JSON response as terminal", async () => {
+    const f = await fixture((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{not-json");
+    });
+    const error = await failure(adapter(f.origin, "unsupported").generate({
+      messages: [{ role: "user", content: "hello" }],
+      model: "fixture-model",
+      tools: [],
+      signal: new AbortController().signal,
+    }));
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toMatchObject({ code: "terminal", retryable: false, retrySafe: false, requestStarted: false });
+  });
+
+  it("classifies an invalid request as non-retryable", async () => {
+    const f = await fixture((_request, response) => json(response, { error: "bad request" }, 400));
+    const error = await failure(adapter(f.origin).generate({
+      messages: [{ role: "user", content: "hello" }],
+      model: "fixture-model",
+      tools: [],
+      signal: new AbortController().signal,
+    }));
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toMatchObject({ code: "invalid_request", retryable: false, retrySafe: false, requestStarted: false });
+  });
+
+  it("suppresses reasoning unless the adapter enables it", async () => {
+    const f = await fixture((_request, response) => {
+      sse(response, [
+        { choices: [{ index: 0, delta: { reasoning_content: "private thought" } }] },
+        { choices: [{ index: 0, delta: { content: "Visible answer." }, finish_reason: "stop" }] },
+      ]);
+    });
+
+    const hidden = await collect(adapter(f.origin, "supported", false).generate({
+      messages: [{ role: "user", content: "hello" }],
+      model: "fixture-model",
+      tools: [],
+      signal: new AbortController().signal,
+    }));
+    expect(hidden.some((event) => event.type === "content.delta" && event.kind === "reasoning_text")).toBe(false);
+
+    const shown = await collect(adapter(f.origin, "supported", true).generate({
+      messages: [{ role: "user", content: "hello" }],
+      model: "fixture-model",
+      tools: [],
+      signal: new AbortController().signal,
+    }));
+    expect(shown).toContainEqual({ type: "content.delta", kind: "reasoning_text", delta: "private thought" });
   });
 
   it("reports unknown capabilities without guessing", () => {

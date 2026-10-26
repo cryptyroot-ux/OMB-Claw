@@ -158,12 +158,78 @@ describe("native ProviderAdapter acceptance", () => {
     });
     const result = await completed;
 
-    expect(result).toMatchObject({ ok: true });
+    expect(result).toMatchObject({ ok: true, stopReason: "stop" });
     expect(invoked).toEqual(["fixture-a", "fixture-b"]);
     expect(requests).toHaveLength(3);
     const started = agentEvents.find((event) => event.type === "run.started") as { runId: string } | undefined;
     expect(started?.runId).toBeTruthy();
     expect(store.getRun(started!.runId)).toMatchObject({ status: "completed", modelRounds: 3, toolCalls: 2 });
+  });
+
+  it("refuses steering on a native turn instead of claiming delivery", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const server = createServer(async (request, response) => {
+      for await (const _part of request) { /* drain */ }
+      await held;
+      jsonResponse(response, {
+        choices: [{ message: { content: "Native answer." }, finish_reason: "stop" }],
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    cleanups.push(async () => {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("fixture did not bind TCP");
+    const origin = `http://127.0.0.1:${address.port}`;
+
+    const runtime = createOpenAIChatRuntime({
+      input: { instanceId: "native-fixture", displayName: "Native Fixture", environment: {}, enabled: true, config: {} },
+      driverKind: "openai-compat",
+      apiKey: "fixture-key",
+      apiUrl: `${origin}/v1`,
+      models: () => catalog,
+      requestBody: (model, messages, stream) => ({ model, messages, stream }),
+      httpErrorLabel: "fixture",
+      missingKeyError: "missing key",
+      unavailableReason: "missing key",
+      timeoutMs: 5_000,
+      nativeLog: { source: "fixture", outgoing: () => ({}), incoming: () => ({}) },
+      computerUse: false,
+      nativeAgentEngine: createAgentEngine({
+        adapters: {
+          resolve: () => createOpenAICompatibleModelAdapter({
+            providerId: "openai-compat",
+            apiUrl: `${origin}/v1`,
+            apiKey: "fixture-key",
+            catalog,
+            capabilities: () => capabilities,
+          }),
+        },
+        store: createSqliteAgentRunStore(),
+      }),
+    });
+    cleanups.push(async () => { await runtime.dispose(); });
+    const completed = new Promise<void>((resolve) => {
+      runtime.adapter.onEvent((event) => {
+        if (event.type === "turn.completed") resolve();
+      });
+    });
+
+    try {
+      await runtime.adapter.sendTurn({
+        threadId: "thread-steer",
+        text: "Take your time.",
+        model: "fixture-model",
+        approvalMode: "full",
+      });
+      expect(await runtime.adapter.steer?.("thread-steer", "An extra instruction.")).toBe("refused");
+    } finally {
+      release();
+    }
+    await completed;
   });
 
   it("rejects unrepresented image input before contacting the provider", async () => {

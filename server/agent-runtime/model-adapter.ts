@@ -19,6 +19,7 @@ export interface OpenAICompatibleModelAdapterConfig {
   capabilities: (modelId: string) => ModelCapabilities;
   fetcher?: typeof fetch;
   timeoutMs?: number;
+  reasoning?: boolean;
 }
 
 interface ChatToolCall {
@@ -57,19 +58,27 @@ interface ChatResponse {
 class OpenAICompatibleAdapterError extends Error implements ModelAdapterError {
   readonly code: ModelAdapterErrorCode;
   readonly retryable: boolean;
+  readonly retrySafe: boolean;
   readonly requestStarted: boolean;
 
-  constructor(message: string, code: ModelAdapterErrorCode, retryable: boolean, requestStarted: boolean) {
+  constructor(
+    message: string,
+    code: ModelAdapterErrorCode,
+    retryable: boolean,
+    retrySafe: boolean,
+    requestStarted: boolean,
+  ) {
     super(message);
     this.name = "OpenAICompatibleAdapterError";
     this.code = code;
     this.retryable = retryable;
+    this.retrySafe = retrySafe;
     this.requestStarted = requestStarted;
   }
 }
 
 function protocolError(message: string, requestStarted: boolean): OpenAICompatibleAdapterError {
-  return new OpenAICompatibleAdapterError(message, "terminal", false, requestStarted);
+  return new OpenAICompatibleAdapterError(message, "terminal", false, false, requestStarted);
 }
 
 function abortError(reason: unknown): DOMException {
@@ -198,14 +207,14 @@ export function createOpenAICompatibleModelAdapter(config: OpenAICompatibleModel
 
     async *generate(request: ModelGenerateRequest): AsyncIterable<ModelEvent> {
       if (!config.apiKey) {
-        throw new OpenAICompatibleAdapterError("No API key is configured for this provider", "terminal", false, false);
+        throw new OpenAICompatibleAdapterError("No API key is configured for this provider", "terminal", false, false, false);
       }
 
       const stream = config.capabilities(request.model).streaming === "supported";
+      const timeoutController = new AbortController();
       const timeout = setTimeout(() => {
         timeoutController.abort(new DOMException("The model request timed out", "TimeoutError"));
       }, config.timeoutMs ?? 120_000);
-      const timeoutController = new AbortController();
       const signal = AbortSignal.any([request.signal, timeoutController.signal]);
       let emitted = false;
 
@@ -229,19 +238,18 @@ export function createOpenAICompatibleModelAdapter(config: OpenAICompatibleModel
         } catch (error) {
           if (request.signal.aborted) throw abortError(request.signal.reason);
           if (timeoutController.signal.aborted) {
-            throw new OpenAICompatibleAdapterError("The model request timed out", "transient", true, emitted);
+            throw new OpenAICompatibleAdapterError("The model request timed out", "transient", true, !emitted, emitted);
           }
           throw new OpenAICompatibleAdapterError(
-            error instanceof Error ? error.message : "The model request failed",
+            emitted ? "The model connection failed after output started" : "The model request failed before a response was received",
             "transient",
             true,
+            !emitted,
             emitted,
           );
         }
 
         if (!response.ok) {
-          const body = await response.text().catch(() => "");
-          const detail = body.slice(0, 500);
           const transient = response.status === 408 || response.status === 429 || response.status >= 500;
           const code: ModelAdapterErrorCode = transient
             ? "transient"
@@ -249,16 +257,22 @@ export function createOpenAICompatibleModelAdapter(config: OpenAICompatibleModel
               ? "invalid_request"
               : "terminal";
           throw new OpenAICompatibleAdapterError(
-            `Model provider returned HTTP ${response.status}${detail ? `: ${detail}` : ""}`,
+            `Model provider returned HTTP ${response.status}`,
             code,
             transient,
+            transient && !emitted,
             emitted,
           );
         }
 
         const contentType = response.headers.get("content-type") ?? "";
         if (!stream || contentType.includes("application/json")) {
-          const completion = await response.json() as ChatResponse;
+          let completion: ChatResponse;
+          try {
+            completion = await response.json() as ChatResponse;
+          } catch {
+            throw protocolError("The model returned an unreadable JSON response", emitted);
+          }
           const message = completion.choices?.[0]?.message;
           if (!message) throw protocolError("The model returned no completion message", emitted);
           if (message.content) {
@@ -320,7 +334,7 @@ export function createOpenAICompatibleModelAdapter(config: OpenAICompatibleModel
                   emitted = true;
                   yield { type: "content.delta", kind: "assistant_text", delta: delta.content };
                 }
-                if (delta?.reasoning_content) {
+                if (config.reasoning && delta?.reasoning_content) {
                   emitted = true;
                   yield { type: "content.delta", kind: "reasoning_text", delta: delta.reasoning_content };
                 }
@@ -351,7 +365,7 @@ export function createOpenAICompatibleModelAdapter(config: OpenAICompatibleModel
                 emitted = true;
                 yield { type: "content.delta", kind: "assistant_text", delta: choice.delta.content };
               }
-              if (choice.delta?.reasoning_content) {
+              if (config.reasoning && choice.delta?.reasoning_content) {
                 emitted = true;
                 yield { type: "content.delta", kind: "reasoning_text", delta: choice.delta.reasoning_content };
               }
@@ -373,12 +387,13 @@ export function createOpenAICompatibleModelAdapter(config: OpenAICompatibleModel
         if (error instanceof OpenAICompatibleAdapterError) throw error;
         if (request.signal.aborted) throw abortError(request.signal.reason);
         if (timeoutController.signal.aborted) {
-          throw new OpenAICompatibleAdapterError("The model request timed out", "transient", true, emitted);
+          throw new OpenAICompatibleAdapterError("The model request timed out", "transient", true, !emitted, emitted);
         }
         throw new OpenAICompatibleAdapterError(
-          error instanceof Error ? error.message : "The model request failed",
+          emitted ? "The model stream failed after output started" : "The model stream failed before output started",
           "transient",
           true,
+          !emitted,
           emitted,
         );
       } finally {
