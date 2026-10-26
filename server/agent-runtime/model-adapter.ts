@@ -24,7 +24,7 @@ export function createOpenAICompatibleModelAdapter(config: OpenAICompatibleModel
       };
     },
 
-    capabilities(modelId: string): import("./contracts.ts").ModelCapabilities {
+    capabilities(_modelId: string): import("./contracts.ts").ModelCapabilities {
       // Capabilities are per-model; in a real implementation, this would come from
       // a model catalog or a capability probe. Here we use the config defaults.
       return {
@@ -38,7 +38,7 @@ export function createOpenAICompatibleModelAdapter(config: OpenAICompatibleModel
       };
     },
 
-    async generate(request: ModelGenerateRequest) {
+    async generate(_request: ModelGenerateRequest) {
       // This is a stub that would be replaced with actual HTTP calls to the provider.
       // The real implementation would use fetch to call /chat/completions.
       // For now, return a simple response.

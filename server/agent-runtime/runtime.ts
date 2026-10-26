@@ -1,19 +1,17 @@
 import type {
   AgentEngine,
   AgentEvent,
-  ModelAdapter,
-  CapabilityRuntime,
   RunState,
-  CapabilityGrant,
   ModelMessage,
-  ModelToolCall,
-  CapabilityCall,
   CapabilityResult,
 } from "./contracts.ts";
 
+type Mutable<T> = { -readonly [Key in keyof T]: T[Key] };
+type MutableRunState = Mutable<RunState>;
+
 export function createAgentEngine(): AgentEngine {
   let runCounter = 0;
-  const runs = new Map<string, RunState>();
+  const runs = new Map<string, MutableRunState>();
   const listeners = new Map<string, Set<(event: AgentEvent) => void>>();
 
   return {
@@ -22,7 +20,7 @@ export function createAgentEngine(): AgentEngine {
     async run(request) {
       const runId = `run-${++runCounter}`;
       const now = new Date().toISOString();
-      const runState: RunState = {
+      const runState: MutableRunState = {
         runId,
         engineId: "omb-native",
         providerModel: request.providerModel,
@@ -124,7 +122,7 @@ export function createAgentEngine(): AgentEngine {
       return { runId, done };
     },
 
-    async interrupt(runId) {
+    async interrupt(_runId) {
       // In this minimal version, interruption is handled by the caller's AbortSignal.
       // A production version would store the AbortController per runId.
     },

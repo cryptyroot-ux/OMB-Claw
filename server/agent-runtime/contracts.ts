@@ -44,7 +44,7 @@ export interface ModelCatalog {
 
 export interface ModelMessage {
   readonly role: "system" | "user" | "assistant" | "tool";
-  readonly content: string;
+  readonly content: string | null;
   readonly toolCallId?: string;
   readonly toolCalls?: ReadonlyArray<ModelToolCall>;
 }
