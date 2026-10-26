@@ -9,7 +9,7 @@ const dataDir = mkdtempSync(join(tmpdir(), "omb-agent-runs-"));
 process.env.OMB_DATA_DIR = dataDir;
 
 const { createSqliteAgentRunStore } = await import("./run-store.ts");
-const { closeMessageDb, readAgentCapabilityCall, readAgentCompactions } = await import("../message-db.ts");
+const { closeMessageDb, readAgentCapabilityCall, readAgentCompactions, readAgentToolOutput } = await import("../message-db.ts");
 
 const run = (runId: string, status: AgentRunRecord["status"] = "running"): AgentRunRecord => ({
   runId,
@@ -102,5 +102,17 @@ describe("createSqliteAgentRunStore", () => {
       { sequence: 1, summary: "first summary", firstKeptIndex: 3, tokenEstimate: 12_000, trigger: "auto" },
       { sequence: 2, summary: "second summary", firstKeptIndex: 5, tokenEstimate: 9_000, trigger: "overflow" },
     ]);
+  });
+
+  it("retains a truncated tool output for later reads", () => {
+    const store = createSqliteAgentRunStore();
+    store.createRun(run("run-5"));
+    store.recordToolOutput?.({
+      runId: "run-5", callId: "call-1", content: "full output", bytes: 11, createdAt: 3_000,
+    });
+
+    expect(readAgentToolOutput("run-5", "call-1")).toMatchObject({
+      runId: "run-5", callId: "call-1", content: "full output", bytes: 11,
+    });
   });
 });

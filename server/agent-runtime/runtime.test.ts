@@ -5,6 +5,7 @@ import type {
   AgentEvent,
   AgentCompactionRecord,
   AgentRunRecord,
+  AgentToolOutputRecord,
   AgentRunStore,
   CapabilityCallStatus,
   CapabilityDescriptor,
@@ -23,16 +24,19 @@ interface TestRunStore extends AgentRunStore {
   readonly runs: Map<string, AgentRunRecord>;
   readonly calls: Map<string, { readonly status: CapabilityCallStatus }>;
   readonly compactions: AgentCompactionRecord[];
+  readonly outputs: Map<string, AgentToolOutputRecord>;
 }
 
 function testRunStore(): TestRunStore {
   const runs = new Map<string, AgentRunRecord>();
   const calls = new Map<string, { readonly status: CapabilityCallStatus }>();
   const compactions: AgentCompactionRecord[] = [];
+  const outputs = new Map<string, AgentToolOutputRecord>();
   return {
     runs,
     calls,
     compactions,
+    outputs,
     createRun(record) {
       runs.set(record.runId, record);
     },
@@ -58,6 +62,12 @@ function testRunStore(): TestRunStore {
     recoverUnsettledRuns() {},
     recordCompaction(record) {
       compactions.push(record);
+    },
+    recordToolOutput(record) {
+      outputs.set(`${record.runId}:${record.callId}`, record);
+    },
+    readToolOutput(runId, callId) {
+      return outputs.get(`${runId}:${callId}`);
     },
   };
 }
@@ -99,6 +109,7 @@ function testCapabilitySession(
   uncertainCallIds: ReadonlySet<string> = new Set(),
   throwingCallIds: ReadonlySet<string> = new Set(),
   imageCallIds: ReadonlySet<string> = new Set(),
+  longCallIds: ReadonlySet<string> = new Set(),
 ): TestCapabilitySession {
   const validations: string[] = [];
   const invocations: string[] = [];
@@ -124,6 +135,7 @@ function testCapabilitySession(
       if (throwingCallIds.has(call.callId)) throw new Error("fixture lost the result after dispatch");
       if (uncertainCallIds.has(call.callId)) return { callId: call.callId, ok: false, content: "result uncertain", error: "uncertain", uncertain: true };
       if (imageCallIds.has(call.callId)) return { callId: call.callId, ok: true, content: "Screenshot captured", images: [{ mimeType: "image/png", data: "fixture" }] };
+      if (longCallIds.has(call.callId)) return { callId: call.callId, ok: true, content: "A".repeat(20_000) };
       return { callId: call.callId, ok: true, content: `Result for ${call.capabilityId}` };
     },
     async close() {
@@ -877,6 +889,54 @@ describe("createAgentEngine", () => {
 
     expect(store.compactions).toHaveLength(0);
     expect(store.getRun(handle.runId)).toMatchObject({ status: "completed" });
+  });
+
+  it("caps a large tool output and exposes the stored remainder through tool_output_read", async () => {
+    const modelAdapter = testModelAdapter([
+      [
+        { type: "tool_calls", calls: [{ id: "call-a", name: "read-a", arguments: { value: "a" } }] },
+        { type: "completed", finishReason: "tool_calls" },
+      ],
+      [
+        { type: "tool_calls", calls: [{ id: "call-read", name: "tool_output_read", arguments: { callId: "call-a", offset: 8_000, limit: 100 } }] },
+        { type: "completed", finishReason: "tool_calls" },
+      ],
+      [
+        { type: "content.delta", kind: "assistant_text", delta: "Read the remainder." },
+        { type: "completed", finishReason: "stop" },
+      ],
+    ]);
+    const store = testRunStore();
+    const capabilities = testCapabilitySession([descriptor("read-a")], new Set(), new Set(), new Set(), new Set(), new Set(["call-a"]));
+    const engine = createAgentEngine({ adapters: registryFor(modelAdapter), store });
+
+    const handle = await engine.run({
+      botId: "bot-1",
+      threadId: "thread-1",
+      text: "Read the large fixture.",
+      messages: userMessages,
+      providerModel: { providerId: "fixture", modelId: "fixture-model" },
+      grant,
+      capabilities,
+      signal: new AbortController().signal,
+    });
+    await handle.done;
+
+    expect(store.getRun(handle.runId)).toMatchObject({ status: "completed" });
+    expect(store.outputs.get(`${handle.runId}:call-a`)?.content).toHaveLength(20_000);
+    expect(capabilities.invocations).toEqual(["call-a"]);
+
+    const firstTool = modelAdapter.requests[1]!.messages.find((message) => message.role === "tool" && message.toolCallId === "call-a");
+    const firstPayload = JSON.parse(firstTool?.content as string) as { result: string; outputRef?: { truncated?: boolean } };
+    expect(firstPayload.outputRef?.truncated).toBe(true);
+    expect(firstPayload.result.length).toBeLessThan(8_500);
+    expect(firstPayload.result).toContain("tool_output_read");
+
+    expect(modelAdapter.requests[1]!.tools.map((tool) => tool.name)).toContain("tool_output_read");
+    const readTool = modelAdapter.requests[2]!.messages.find((message) => message.role === "tool" && message.toolCallId === "call-read");
+    const readPayload = JSON.parse(readTool?.content as string) as { result: string };
+    expect(JSON.parse(readPayload.result)).toMatchObject({ callId: "call-a", offset: 8_000, limit: 100, totalChars: 20_000, nextOffset: 8_100 });
+    expect((JSON.parse(readPayload.result) as { content: string }).content).toHaveLength(100);
   });
 
   it("steers a running turn before the next round and refuses after it finishes", async () => {

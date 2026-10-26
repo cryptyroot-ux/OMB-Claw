@@ -2,7 +2,9 @@ import {
   insertAgentCapabilityCall,
   insertAgentCompaction,
   insertAgentRun,
+  insertAgentToolOutput,
   readAgentRun,
+  readAgentToolOutput,
   recoverUnsettledAgentRuns,
   transitionAgentRun,
   updateAgentCapabilityCall,
@@ -42,6 +44,12 @@ export function createSqliteAgentRunStore(options: { recoverAt?: number } = {}):
     },
     recordCompaction(record): void {
       insertAgentCompaction(record);
+    },
+    recordToolOutput(record): void {
+      insertAgentToolOutput(record);
+    },
+    readToolOutput(runId, callId) {
+      return readAgentToolOutput(runId, callId);
     },
   };
 }

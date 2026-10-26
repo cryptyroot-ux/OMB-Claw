@@ -189,6 +189,9 @@ export interface AgentRunStore {
   recoverUnsettledRuns(now: number): void;
   /** Optional so existing stores and tests do not need to persist compaction history. */
   recordCompaction?(record: AgentCompactionRecord): void;
+  /** Optional: retain a tool output that was truncated before entering the model prompt. */
+  recordToolOutput?(record: AgentToolOutputRecord): void;
+  readToolOutput?(runId: RunId, callId: CapabilityCallId): AgentToolOutputRecord | undefined;
 }
 
 export interface AgentCompactionRecord {
@@ -198,6 +201,14 @@ export interface AgentCompactionRecord {
   readonly firstKeptIndex: number;
   readonly tokenEstimate: number;
   readonly trigger: "auto" | "overflow";
+  readonly createdAt: number;
+}
+
+export interface AgentToolOutputRecord {
+  readonly runId: RunId;
+  readonly callId: CapabilityCallId;
+  readonly content: string;
+  readonly bytes: number;
   readonly createdAt: number;
 }
 

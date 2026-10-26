@@ -16,6 +16,7 @@ import type {
   AgentRunRecord,
   AgentRunStatus,
   AgentCompactionRecord,
+  AgentToolOutputRecord,
   CapabilityCallStatus,
 } from "./agent-runtime/contracts.ts";
 export type { SearchHit } from "./message-search-query.ts";
@@ -120,6 +121,14 @@ function open(): DatabaseSync {
       trigger TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       PRIMARY KEY (run_id, sequence)
+    );
+    CREATE TABLE IF NOT EXISTS agent_tool_outputs (
+      run_id TEXT NOT NULL,
+      call_id TEXT NOT NULL,
+      content TEXT NOT NULL,
+      bytes INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (run_id, call_id)
     );
     CREATE TABLE IF NOT EXISTS agent_capability_calls (
       run_id TEXT NOT NULL,
@@ -642,6 +651,33 @@ export function readAgentCompactions(runId: string): AgentCompactionRecord[] {
     trigger: row.trigger,
     createdAt: row.created_at,
   }));
+}
+
+export function insertAgentToolOutput(record: AgentToolOutputRecord): void {
+  db()
+    .prepare(
+      "INSERT OR REPLACE INTO agent_tool_outputs(run_id, call_id, content, bytes, created_at) VALUES (?, ?, ?, ?, ?)",
+    )
+    .run(record.runId, record.callId, record.content, record.bytes, record.createdAt);
+}
+
+export function readAgentToolOutput(runId: string, callId: string): AgentToolOutputRecord | undefined {
+  const row = db()
+    .prepare("SELECT run_id, call_id, content, bytes, created_at FROM agent_tool_outputs WHERE run_id = ? AND call_id = ?")
+    .get(runId, callId) as {
+      run_id: string;
+      call_id: string;
+      content: string;
+      bytes: number;
+      created_at: number;
+    } | undefined;
+  return row ? {
+    runId: row.run_id,
+    callId: row.call_id,
+    content: row.content,
+    bytes: row.bytes,
+    createdAt: row.created_at,
+  } : undefined;
 }
 
 export function updateAgentRunProgress(
