@@ -26,6 +26,8 @@ import { requestTooLargeMessage } from "../../shared/request-too-large.ts";
 import { toolSchemaProfileFor } from "../tool-schema-profile.ts";
 import { classifyContinuable, writeTurnHandoff } from "../turn-continuation.ts";
 import { KEY_REJECTED_REASON, keyRejected, noteKeyAccepted, noteKeyRejected, rejectsKey } from "../key-rejections.ts";
+import type { AgentEngine, CapabilityGrant } from "../agent-runtime/contracts.ts";
+import { createChatCapabilitySession } from "../agent-runtime/chat-capability-runtime.ts";
 
 export interface OpenAIChatMessage {
   role: "system" | "user" | "assistant" | "tool";
@@ -128,6 +130,8 @@ interface RuntimeOptions<Config> {
   /** Smaller models announce a step and end the turn without calling a tool; such a reply gets a nudge, at most three
    * per turn and each only after tool progress since the last. */
   nudgeAnnouncedAction?: boolean;
+  /** Test/rollout hook: run this turn through the OMB-owned Agent Runtime. */
+  nativeAgentEngine?: AgentEngine;
 }
 
 const usageFrom = (usage: CompletionJson["usage"]): Usage | null =>
@@ -588,6 +592,162 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     active.set(turn.threadId, turnEntry);
     emit({ ...base(turn.threadId, turnId), type: "turn.started" });
     emit({ ...base(turn.threadId, turnId), type: "session.started", sessionId: null, model });
+
+    if (options.nativeAgentEngine) {
+      const nativeEngine = options.nativeAgentEngine;
+      void (async () => {
+        let tools: ChatToolSession | undefined;
+        let capabilitySession: ReturnType<typeof createChatCapabilitySession> | undefined;
+        let unsubscribe = () => {};
+        let completed = false;
+        let roundText = "";
+        const usage: Usage = { input: 0, output: 0 };
+        let hasUsage = false;
+
+        const finish = (ok: boolean, stopReason: string | null, failure?: string) => {
+          if (completed) return;
+          completed = true;
+          if (ok && roundText.trim()) {
+            emit({ ...base(turn.threadId, turnId), type: "item.completed", itemType: "assistant_text", text: safeText(roundText) });
+          }
+          if (failure) {
+            emit({
+              ...base(turn.threadId, turnId),
+              type: "runtime.error",
+              message: safeText(failure).slice(0, 2_000),
+              terminal: !abort.signal.aborted,
+            });
+          }
+          emit({
+            ...base(turn.threadId, turnId),
+            type: "turn.completed",
+            ok,
+            stopReason: abort.signal.aborted ? "interrupted" : stopReason,
+            cost: null,
+            ...(hasUsage ? { usage } : {}),
+          });
+        };
+
+        try {
+          const userMessage = messages.at(-1);
+          const nativeText = userMessage?.content;
+          if (turn.images?.length || messages.some((message) => Array.isArray(message.content)) || typeof nativeText !== "string") {
+            throw new ChatProtocolError("The native runtime does not yet represent image or structured input; this turn was not sent.");
+          }
+
+          const parsed = parseToolScope(turn.toolScope);
+          if (!parsed.ok) throw new Error(parsed.error);
+          const scope = parsed.scope;
+          tools = await mountChatTools(
+            options.tools === false ? undefined : turn.integrations,
+            abort.signal,
+            options.computerUse,
+            scope,
+            turn.mcpCallTimeoutMs,
+            toolSchemaProfileFor({ url: options.apiUrl, model }),
+          );
+          for (const { server, reason } of tools.skipped) {
+            emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message: `MCP server "${server}" was skipped for this turn: ${safeText(reason)}` });
+          }
+          const questionAllowed = options.tools !== false && allowsTool(scope, { kind: "native", name: ASK_USER_TOOL });
+          if (questionAllowed && !tools.definitions.some((definition) => definition.function.name === ASK_USER_TOOL)) {
+            tools.definitions.push(ASK_USER_TOOL_DEFINITION);
+          }
+          capabilitySession = createChatCapabilitySession({ session: tools, approval });
+
+          const grant: CapabilityGrant = {
+            botId: turn.botId ?? "",
+            threadId: turn.threadId,
+            approvalMode: turn.approvalMode === "full" ? "full" : "ask",
+            allowed: new Set(),
+            denied: new Set(),
+          };
+          const nativeMessages = messages.slice(0, -1).map((message) => ({
+            role: message.role,
+            content: typeof message.content === "string" ? message.content : null,
+            ...(message.tool_call_id ? { toolCallId: message.tool_call_id } : {}),
+          }));
+
+          unsubscribe = nativeEngine.onEvent(turn.threadId, (event) => {
+            switch (event.type) {
+              case "model.delta":
+                if (event.kind === "assistant_text") roundText += event.delta;
+                emit({ ...base(turn.threadId, turnId), type: "content.delta", streamKind: event.kind, delta: safeText(event.delta) });
+                break;
+              case "usage":
+                usage.input += event.input;
+                usage.output += event.output;
+                hasUsage = true;
+                emit({ ...base(turn.threadId, turnId), type: "thread.token-usage.updated", ...usage });
+                break;
+              case "tool.calls":
+                roundText = "";
+                for (const call of event.calls) {
+                  emit({
+                    ...base(turn.threadId, turnId),
+                    type: "item.started",
+                    itemType: "tool",
+                    itemId: call.id,
+                    title: call.name,
+                    input: preview(call.arguments),
+                  });
+                }
+                break;
+              case "tool.result":
+                emit({
+                  ...base(turn.threadId, turnId),
+                  type: "item.completed",
+                  itemType: "tool",
+                  itemId: event.callId,
+                  ok: event.result.ok,
+                  output: preview({ ok: event.result.ok, result: event.result.content }),
+                });
+                break;
+              case "turn.completed":
+                finish(event.ok, event.ok ? null : event.stopReason ?? "error");
+                break;
+              case "run.failed":
+                finish(false, "error", event.message);
+                break;
+              case "run.interrupted":
+                finish(false, "interrupted");
+                break;
+              case "run.recovery_required":
+                finish(false, "recovery_required", "The operation may have taken effect. Inspect its state before continuing.");
+                break;
+              case "run.started":
+                break;
+            }
+          });
+
+          const handle = await nativeEngine.run({
+            botId: turn.botId ?? "",
+            threadId: turn.threadId,
+            text: nativeText,
+            messages: nativeMessages,
+            providerModel: { providerId: options.driverKind, modelId: model },
+            grant,
+            capabilities: capabilitySession,
+            signal: abort.signal,
+          });
+          await handle.done;
+          if (!completed) finish(false, abort.signal.aborted ? "interrupted" : "error");
+        } catch (error) {
+          finish(false, abort.signal.aborted ? "interrupted" : "error", asError(error).message);
+        } finally {
+          unsubscribe();
+          approval.close();
+          try {
+            await tools?.close();
+          } catch {
+            if (!completed) finish(false, "error", "Tool processes could not be stopped; their execution state is uncertain.");
+          }
+          active.delete(turn.threadId);
+          resolveDone();
+        }
+      })();
+      return { turnId };
+    }
 
     void (async () => {
       let tools: ChatToolSession | undefined;

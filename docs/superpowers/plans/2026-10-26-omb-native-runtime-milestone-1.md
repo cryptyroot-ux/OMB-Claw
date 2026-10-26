@@ -194,37 +194,38 @@ Commit with `feat: bridge chat tools into the native Capability Runtime`.
 
 **Files:**
 - Modify: `server/drivers/openai-chat.ts`
+- Create: `server/agent-runtime/native-provider-acceptance.test.ts`
 - Test: `server/drivers/openai-chat-tools.test.ts`
 - Test: `server/drivers/openai-chat.test.ts`
 
 **Interfaces:**
 - Consumes: Tasks 1–4 `AgentEngine`, SQLite `AgentRunStore`, OpenAI-compatible `ModelAdapter`, and `ChatToolSession` capability bridge.
-- Produces: the existing `ProviderAdapter.sendTurn/interruptTurn/onEvent` surface backed by AgentRuntime when an optional `nativeAgentEngine: AgentEngine` is passed to `createOpenAIChatRuntime`. With no injection, the current loop and all production callers remain unchanged. The fixture exercises the same ProviderAdapter contract without a persisted bot setting or UI control.
+- Produces: the existing `ProviderAdapter.sendTurn/interruptTurn/onEvent` surface backed by AgentRuntime when an optional `nativeAgentEngine: AgentEngine` is passed to `createOpenAIChatRuntime`. With no injection, the current loop and all production callers remain unchanged. The acceptance fixture injects an engine that substitutes its own capability session; production gets no capability-bypass hook.
 
-- [ ] **Step 1: Add the ProviderAdapter-level regression test first**
+- [x] **Step 1: Add the ProviderAdapter-level regression test first**
 
-Extend the existing local HTTP + MCP fixture with `native_engine_completes_two_tool_rounds_without_agent_cli` and `native_path_rejects_unrepresented_image_input`. Use `createOpenAIChatRuntime` configured with the real OpenAI-compatible HTTP adapter and an injected AgentEngine. Assert model → two capability/result rounds → final answer, persisted run/call state, existing event shape, and exactly one fixture effect per call. Record child processes and fail if Claude/Codex/OpenCode/Hermes or another agent CLI launches; allow only the declared Node-based test/MCP fixture processes.
+Add tests named `completes two tool rounds without an agent CLI` and `rejects unrepresented image input before contacting the provider` in `server/agent-runtime/native-provider-acceptance.test.ts`. Use the local HTTP provider fixture, a temporary `DATA_DIR`, the SQLite run store, a real OpenAI-compatible adapter, and an injected engine. Assert model → two capability/result rounds → final answer, persisted run/call state, existing event shape, exactly two capability invocations, and zero provider requests for the rejected image turn. Run the test process with a non-existent `PATH` and no MCP transports so no agent CLI can be discovered.
 
-- [ ] **Step 2: Run the test and confirm RED**
+- [x] **Step 2: Run the test and confirm RED**
 
-Run: `pnpm vitest run server/drivers/openai-chat-tools.test.ts -t 'native_engine_completes_two_tool_rounds_without_agent_cli|native_path_rejects_unrepresented_image_input'`
-Expected: the test fails because `createOpenAIChatRuntime` does not yet delegate through the injected AgentRuntime.
+Run: `pnpm vitest run server/agent-runtime/native-provider-acceptance.test.ts`
+Expected: the legacy loop reports `ok: false` for tool calls without mounted tools, and the image turn is not rejected before the provider.
 
-- [ ] **Step 3: Add the injectable AgentRuntime path**
+- [x] **Step 3: Add the injectable AgentRuntime path**
 
-Add optional `nativeAgentEngine?: AgentEngine` to `createOpenAIChatRuntime`; when present, send the prepared turn/context, model reference, grant, and signal through `AgentEngine.run()` and map normalized events to existing ProviderAdapter events. When absent, retain the current loop. Keep `ProviderAdapter` return types, turn/event IDs, cancellation, usage, and failure mapping stable. Do not change `server/index.ts` routing, add UI controls, change saved bot settings, or migrate other API/ACP/CLI drivers in this milestone.
+Add optional `nativeAgentEngine?: AgentEngine` to `createOpenAIChatRuntime`; when present, mount the existing ChatToolSession, adapt it with `createChatCapabilitySession`, send the prepared turn/context, model reference, grant, and signal through `AgentEngine.run()`, and map normalized events to existing ProviderAdapter events. When absent, retain the current loop. Keep `ProviderAdapter` return types, turn/event IDs, cancellation, usage, and failure mapping stable. Do not change `server/index.ts` routing, add UI controls, change saved bot settings, or migrate other API/ACP/CLI drivers in this milestone.
 
-- [ ] **Step 4: Run focused compatibility and acceptance tests**
+- [x] **Step 4: Run focused compatibility and acceptance tests**
 
-Run: `pnpm vitest run server/drivers/openai-chat-tools.test.ts server/drivers/openai-chat.test.ts server/drivers/openai-chat-protocol.test.ts server/drivers/chat-tool-approval.test.ts server/agent-runtime/`
+Run: `pnpm vitest run server/agent-runtime/ server/drivers/openai-chat-tools.test.ts server/drivers/openai-chat.test.ts server/drivers/openai-chat-protocol.test.ts server/drivers/chat-tool-approval.test.ts`
 Expected: all selected tests pass; no live provider/API credential is used and no external agent CLI launches.
 
-- [ ] **Step 5: Run typecheck and inspect the final diff**
+- [x] **Step 5: Run typecheck and inspect the final diff**
 
 Run: `pnpm typecheck`
 Expected: TypeScript build and server typecheck pass without diagnostics. Do not rerun the 1h+ repo-wide suite in this milestone; the existing local full-suite attempt is recorded as not green and should be triaged in its supported CI environment before canary.
 
-- [ ] **Step 6: Commit the milestone**
+- [x] **Step 6: Commit the milestone**
 
 Commit with `feat: add native Agent Runtime ProviderAdapter path`.
 
