@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { ModelCatalog, ProviderDriver } from "../contracts.ts";
 import { createOpenAIChatRuntime } from "./openai-chat.ts";
+import { createNativeChatEngine } from "./native-engine.ts";
 
 // Meta Model API: Muse Spark and Muse Wonder over the OpenAI chat contract.
 // https://dev.meta.ai/docs/protocols/chat-completions
@@ -98,8 +99,13 @@ export const MetaDriver: ProviderDriver<MetaConfig> = {
       } catch {}
     };
     if (apiKey) void refreshModels();
+    const nativeAgentEngine = createNativeChatEngine({
+      providerId: "meta", apiUrl: config.url, apiKey, catalog: () => catalog, reasoning: true,
+      toolsEnabled: config.tools !== false, imageInput: (model) => /^muse-/i.test(model),
+    });
     return createOpenAIChatRuntime({
       input, driverKind: "meta", apiKey, apiUrl: config.url,
+      nativeAgentEngine,
       tools: config.tools, models: () => catalog, refreshModels, reasoning: true,
       computerUse: true, imageInput: model => /^muse-/i.test(model),
       requestBody: (model, messages, stream) => ({

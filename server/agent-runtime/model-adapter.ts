@@ -29,9 +29,11 @@ interface ChatToolCall {
   function?: { name?: string; arguments?: string };
 }
 
+type WireContentPart = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
+
 interface ChatMessage {
   role?: string;
-  content?: string | null;
+  content?: string | readonly WireContentPart[] | null;
   reasoning_content?: string;
   tool_calls?: ChatToolCall[];
 }
@@ -106,12 +108,19 @@ function usageEvent(usage: ChatUsage | undefined): ModelEvent | null {
   };
 }
 
+function wireContent(content: ModelMessage["content"]): string | readonly WireContentPart[] | null {
+  if (typeof content === "string" || content === null) return content;
+  return content.map((part) => part.type === "text"
+    ? { type: "text", text: part.text }
+    : { type: "image_url", image_url: { url: `data:${part.mimeType};base64,${part.data}` } });
+}
+
 function wireMessages(messages: ReadonlyArray<ModelMessage>) {
   return messages.map((message) => {
     if (message.role === "assistant") {
       return {
         role: "assistant",
-        content: message.content,
+        content: wireContent(message.content),
         ...(message.toolCalls?.length
           ? {
               tool_calls: message.toolCalls.map((call) => ({
@@ -124,9 +133,12 @@ function wireMessages(messages: ReadonlyArray<ModelMessage>) {
       };
     }
     if (message.role === "tool") {
-      return { role: "tool", tool_call_id: message.toolCallId, content: message.content ?? "" };
+      const content = Array.isArray(message.content)
+        ? message.content.map((part) => part.type === "text" ? part.text : "").join("\n")
+        : message.content ?? "";
+      return { role: "tool", tool_call_id: message.toolCallId, content };
     }
-    return { role: message.role, content: message.content ?? "" };
+    return { role: message.role, content: wireContent(message.content) ?? "" };
   });
 }
 
@@ -275,7 +287,7 @@ export function createOpenAICompatibleModelAdapter(config: OpenAICompatibleModel
           }
           const message = completion.choices?.[0]?.message;
           if (!message) throw protocolError("The model returned no completion message", emitted);
-          if (message.content) {
+          if (typeof message.content === "string" && message.content) {
             emitted = true;
             yield { type: "content.delta", kind: "assistant_text", delta: message.content };
           }
@@ -330,7 +342,7 @@ export function createOpenAICompatibleModelAdapter(config: OpenAICompatibleModel
               if (choice) {
                 sawChoice = true;
                 const delta = choice.delta;
-                if (delta?.content) {
+                if (typeof delta?.content === "string" && delta.content) {
                   emitted = true;
                   yield { type: "content.delta", kind: "assistant_text", delta: delta.content };
                 }
@@ -361,7 +373,7 @@ export function createOpenAICompatibleModelAdapter(config: OpenAICompatibleModel
             const choice = update.choices?.[0];
             if (choice) {
               sawChoice = true;
-              if (choice.delta?.content) {
+              if (typeof choice.delta?.content === "string" && choice.delta.content) {
                 emitted = true;
                 yield { type: "content.delta", kind: "assistant_text", delta: choice.delta.content };
               }

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { ModelCatalog, ProviderDriver } from "../contracts.ts";
 import { createOpenAIChatRuntime } from "./openai-chat.ts";
+import { createNativeChatEngine } from "./native-engine.ts";
 
 const DEFAULT_URL = "https://api.mistral.ai/v1";
 const DEFAULT_MODELS: ModelCatalog = {
@@ -94,8 +95,13 @@ export const MistralDriver: ProviderDriver<MistralConfig> = {
       } catch {}
     };
     if (apiKey) void refreshModels();
+    const nativeAgentEngine = createNativeChatEngine({
+      providerId: "mistral", apiUrl: config.url, apiKey, catalog: () => catalog,
+      toolsEnabled: config.tools !== false, imageInput: () => true,
+    });
     return createOpenAIChatRuntime({
       input, driverKind: "mistral", apiKey, apiUrl: config.url,
+      nativeAgentEngine,
       tools: config.tools, models: () => catalog, refreshModels, contentText,
       requestBody: (model, messages, stream) => ({ model, messages, stream }),
       httpErrorLabel: "Mistral",

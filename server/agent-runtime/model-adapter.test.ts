@@ -148,6 +148,36 @@ describe("createOpenAICompatibleModelAdapter", () => {
     });
   });
 
+  it("serializes neutral image parts as image_url content", async () => {
+    const f = await fixture((_request, response) => {
+      json(response, { choices: [{ message: { content: "Seen." }, finish_reason: "stop" }] });
+    });
+
+    await collect(adapter(f.origin, "unsupported").generate({
+      messages: [
+        { role: "system", content: "Look." },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "What is this?" },
+            { type: "image", mimeType: "image/png", data: "fixture" },
+          ],
+        },
+      ],
+      model: "fixture-model",
+      tools: [],
+      signal: new AbortController().signal,
+    }));
+
+    expect(JSON.parse(f.requests[0]!).messages[1]).toEqual({
+      role: "user",
+      content: [
+        { type: "text", text: "What is this?" },
+        { type: "image_url", image_url: { url: "data:image/png;base64,fixture" } },
+      ],
+    });
+  });
+
   it("maps SSE deltas, usage, and fragmented tool calls", async () => {
     const f = await fixture((_request, response) => {
       sse(response, [

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { ModelCatalog, ProviderDriver } from "../contracts.ts";
 import { createOpenAIChatRuntime } from "./openai-chat.ts";
+import { createNativeChatEngine } from "./native-engine.ts";
 
 const DEFAULT_URL = "https://api.cerebras.ai/v1";
 // The account tier is unknown: use the shared free-tier limit, not paid 128K.
@@ -81,8 +82,13 @@ export const CerebrasDriver: ProviderDriver<CerebrasConfig> = {
       } catch {}
     };
     if (apiKey) void refreshModels();
+    const nativeAgentEngine = createNativeChatEngine({
+      providerId: "cerebras", apiUrl: config.url, apiKey, catalog: () => catalog, reasoning: true,
+      toolsEnabled: config.tools !== false, imageInput: (model) => !TEXT_ONLY_MODELS.test(model),
+    });
     return createOpenAIChatRuntime({
       input, driverKind: "cerebras", apiKey, apiUrl: config.url,
+      nativeAgentEngine,
       tools: config.tools, models: () => catalog, refreshModels, reasoning: true,
       reasoningReplayField: "reasoning",
       computerUse: true, imageInput: (model) => !TEXT_ONLY_MODELS.test(model),

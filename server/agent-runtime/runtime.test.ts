@@ -551,4 +551,126 @@ describe("createAgentEngine", () => {
     expect(capabilities.invocations).toEqual([]);
     expect(signalSeen?.aborted).toBe(true);
   });
+
+  it("sends a turn's images as user content parts", async () => {
+    const modelAdapter = testModelAdapter([
+      [
+        { type: "content.delta", kind: "assistant_text", delta: "Saw the image." },
+        { type: "completed", finishReason: "stop" },
+      ],
+    ], { ...supportedCapabilities, imageInput: "supported" });
+    const engine = createAgentEngine({ adapters: registryFor(modelAdapter), store: testRunStore() });
+
+    const { done } = await engine.run({
+      botId: "bot-1",
+      threadId: "thread-1",
+      text: "Describe it.",
+      messages: userMessages,
+      images: [{ mimeType: "image/png", data: "fixture" }],
+      providerModel: { providerId: "fixture", modelId: "fixture-model" },
+      grant,
+      capabilities: testCapabilitySession([descriptor("read-a")]),
+      signal: new AbortController().signal,
+    });
+    await done;
+
+    expect(modelAdapter.requests[0]?.messages.at(-1)).toEqual({
+      role: "user",
+      content: [
+        { type: "text", text: "Describe it." },
+        { type: "image", mimeType: "image/png", data: "fixture" },
+      ],
+    });
+  });
+
+  it("returns tool images to a vision model and refuses them for a text-only model", async () => {
+    const rounds = [
+      [
+        { type: "tool_calls", calls: [{ id: "call-a", name: "read-a", arguments: { value: "a" } }] },
+        { type: "completed", finishReason: "tool_calls" },
+      ],
+      [
+        { type: "content.delta", kind: "assistant_text", delta: "Saw the screenshot." },
+        { type: "completed", finishReason: "stop" },
+      ],
+    ] as const;
+    const vision = testModelAdapter(rounds, { ...supportedCapabilities, imageInput: "supported" });
+    const visionStore = testRunStore();
+    const visionEngine = createAgentEngine({ adapters: registryFor(vision), store: visionStore });
+    const visionRun = await visionEngine.run({
+      botId: "bot-1",
+      threadId: "thread-1",
+      text: "Look at the screenshot.",
+      messages: userMessages,
+      providerModel: { providerId: "fixture", modelId: "fixture-model" },
+      grant,
+      capabilities: testCapabilitySession([descriptor("read-a")], new Set(), new Set(), new Set(), new Set(["call-a"])),
+      signal: new AbortController().signal,
+    });
+    await visionRun.done;
+
+    expect(visionStore.getRun(visionRun.runId)).toMatchObject({ status: "completed" });
+    expect(vision.requests[1]?.messages).toContainEqual({
+      role: "user",
+      content: [
+        { type: "text", text: "Screenshot result from tool call call-a:" },
+        { type: "image", mimeType: "image/png", data: "fixture" },
+      ],
+    });
+
+    const textOnly = testModelAdapter([rounds[0]]);
+    const textStore = testRunStore();
+    const textEngine = createAgentEngine({ adapters: registryFor(textOnly), store: textStore });
+    const textRun = await textEngine.run({
+      botId: "bot-1",
+      threadId: "thread-1",
+      text: "Look at the screenshot.",
+      messages: userMessages,
+      providerModel: { providerId: "fixture", modelId: "fixture-model" },
+      grant,
+      capabilities: testCapabilitySession([descriptor("read-a")], new Set(), new Set(), new Set(), new Set(["call-a"])),
+      signal: new AbortController().signal,
+    });
+    await textRun.done;
+
+    expect(textStore.getRun(textRun.runId)).toMatchObject({ status: "failed", failureCode: "unsupported_capability" });
+    expect(textOnly.requests).toHaveLength(1);
+  });
+
+  it("nudges an announced action and continues to a tool call", async () => {
+    const modelAdapter = testModelAdapter([
+      [
+        { type: "content.delta", kind: "assistant_text", delta: "Let me check the fixture." },
+        { type: "completed", finishReason: "stop" },
+      ],
+      [
+        { type: "tool_calls", calls: [{ id: "call-a", name: "read-a", arguments: { value: "a" } }] },
+        { type: "completed", finishReason: "tool_calls" },
+      ],
+      [
+        { type: "content.delta", kind: "assistant_text", delta: "Verified." },
+        { type: "completed", finishReason: "stop" },
+      ],
+    ]);
+    const engine = createAgentEngine({ adapters: registryFor(modelAdapter), store: testRunStore() });
+
+    const { done } = await engine.run({
+      botId: "bot-1",
+      threadId: "thread-1",
+      text: "Check the fixture.",
+      messages: userMessages,
+      providerModel: { providerId: "fixture", modelId: "fixture-model" },
+      grant,
+      capabilities: testCapabilitySession([descriptor("read-a")]),
+      signal: new AbortController().signal,
+      nudgeAnnouncedAction: true,
+    });
+    await done;
+
+    expect(modelAdapter.requests).toHaveLength(3);
+    const nudged = modelAdapter.requests[1]!.messages;
+    const nudgeIndex = nudged.findIndex((message) => message.role === "user" && typeof message.content === "string" && message.content.includes("called no tool"));
+    expect(nudgeIndex).toBeGreaterThan(0);
+    expect(nudged[nudgeIndex - 1]).toEqual({ role: "assistant", content: "Let me check the fixture." });
+  });
 });

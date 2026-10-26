@@ -27,3 +27,11 @@ export function isExternalAgentEngine(driverKind: string): boolean {
 export function supportedAgentDrivers<T extends { readonly driverKind: string }>(drivers: readonly T[]): readonly T[] {
   return drivers.filter((driver) => !isExternalAgentEngine(driver.driverKind));
 }
+
+/** API drivers whose turns run on the OMB-owned native loop. Claude, Codex and the ACP engines are not here: this
+ * build does not register them. */
+const NATIVE_API_DRIVER_KINDS = new Set(["openai-compat", "grok", "groq", "meta", "minimax", "mistral", "cerebras"]);
+
+export function usesNativeAgentEngine(driverKind: string): boolean {
+  return NATIVE_API_DRIVER_KINDS.has(driverKind);
+}

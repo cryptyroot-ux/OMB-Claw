@@ -9,6 +9,21 @@ fake-engine fixture from `launch`, a Vite preview of the app, and one browser
 session whose `HOME` is the fixture's data directory. The user's app on port
 8799 and `~/.openmausbot` are never involved.
 
+## Native provider
+
+This build registers no external agent engines, so `ui launch` can seed its bot
+on an OMB native loop instead of fake Claude:
+
+```sh
+OMB_UI_NATIVE_URL=http://127.0.0.1:PORT/v1 \
+OMB_UI_NATIVE_KEY=synthetic-ui-key \
+OMB_UI_NATIVE_MODEL=fixture-model \
+  node --experimental-strip-types scripts/control-omb.ts ui launch
+```
+
+The launcher patches the OpenAI-compatible provider and sets the seeded bot's
+model to it. `server/native-ui.e2e.test.ts` uses this path end to end.
+
 ## Launch
 
 ```sh

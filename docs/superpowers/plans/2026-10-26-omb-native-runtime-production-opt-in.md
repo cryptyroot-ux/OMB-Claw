@@ -64,4 +64,15 @@
 - [x] Commit locally.
 - [x] Report full-suite status as not green; push only with approval.
 
-**Known gap:** `server/openai-tools.e2e.test.ts` still asserts the legacy OpenAI-compatible loop and fails its request-count assumptions under native execution. It needs a native-aware replacement/update; the focused native-only fixture is the current proof.
+### Task 4: Upstream catch-up and native completion
+
+- [x] Merge upstream `origin/main` at `83f4b19bf` (143 commits) into the native branch; resolve the `openai-chat.ts` turn-entry conflict by keeping both `native` and `ending`.
+- [x] Add `nudgeAnnouncedAction` parity to the native loop, sharing `announcesAction` through `server/agent-runtime/announcement.ts`.
+- [x] Make every API driver native: `openai-compat`, `grok`, `groq`, `meta`, `minimax`, `mistral`, `cerebras`; `server/drivers/native-engine.ts` builds their adapter/engine, and `server/index.ts` marks their turns with `agentEngine:"omb-native"`.
+- [x] Add multimodal input: neutral `ModelContentPart` (`text`/`image`), user image parts, and tool-result images returned to vision models. Text-only models still refuse tool images.
+- [x] Rewrite `server/openai-tools.e2e.test.ts` request scoping so a chief incident turn on the same loopback provider cannot change a scenario's counts; it passes for all three drivers.
+- [x] Add `server/native-ui.e2e.test.ts`: the real renderer sends a turn to a loopback native provider, shows the reply, and `agent_runs` records one completed run.
+- [x] Add `OMB_UI_NATIVE_URL`/`OMB_UI_NATIVE_KEY`/`OMB_UI_NATIVE_MODEL` to the UI launcher so the fixture no longer depends on fake Claude.
+- [x] Exclude `server/index.test.ts` from the native default suite: it drives the removed Claude/Codex CLI fixtures on every turn. Run it with `OMB_LEGACY_ENGINE_TESTS=1` only in an engine-enabled checkout.
+
+**Verification:** `server/agent-runtime` 8 files / 46 tests; driver suites 8 files / 143 tests; `native-only` + `openai-tools` 4 tests; `native-ui` 1 test; typecheck and lint pass.

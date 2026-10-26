@@ -49,10 +49,15 @@ export interface ModelCatalog {
 
 export interface ModelMessage {
   readonly role: "system" | "user" | "assistant" | "tool";
-  readonly content: string | null;
+  readonly content: string | ReadonlyArray<ModelContentPart> | null;
   readonly toolCallId?: string;
   readonly toolCalls?: ReadonlyArray<ModelToolCall>;
 }
+
+/** Provider-neutral content. The adapter owns the wire encoding; the loop never sees a provider format. */
+export type ModelContentPart =
+  | { readonly type: "text"; readonly text: string }
+  | { readonly type: "image"; readonly mimeType: string; readonly data: string };
 
 export interface ModelToolCall {
   readonly id: string;
@@ -200,6 +205,10 @@ export interface AgentRunRequest {
   readonly grant: CapabilityGrant;
   readonly capabilities: CapabilitySession;
   readonly signal: AbortSignal;
+  /** Images attached to this turn only; kept out of the replay transcript. */
+  readonly images?: ReadonlyArray<{ readonly mimeType: string; readonly data: string }>;
+  /** Nudge a reply that announces a step and ends without a tool call, at most three times per run. */
+  readonly nudgeAnnouncedAction?: boolean;
 }
 
 export interface AgentRunHandle {

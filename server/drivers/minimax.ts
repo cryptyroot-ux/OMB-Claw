@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import type { ModelCatalog, ProviderDriver } from "../contracts.ts";
 import { createOpenAIChatRuntime } from "./openai-chat.ts";
+import { createNativeChatEngine } from "./native-engine.ts";
 
 const DRIVER_KIND = "minimax";
 const API_KEY_ENV = "MINIMAX_API_KEY";
@@ -102,9 +103,14 @@ export const MinimaxDriver: ProviderDriver<MinimaxConfig> = {
       ? { ...MODELS, default: local.defaultModel }
       : MODELS;
 
+    const nativeAgentEngine = createNativeChatEngine({
+      providerId: DRIVER_KIND, apiUrl, apiKey, catalog: () => models, reasoning: true,
+      toolsEnabled: input.config.tools !== false, imageInput: () => true,
+    });
     return createOpenAIChatRuntime({
       input,
       driverKind: DRIVER_KIND,
+      nativeAgentEngine,
       apiKey,
       apiUrl,
       tools: input.config.tools,

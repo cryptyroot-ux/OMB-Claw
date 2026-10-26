@@ -14,6 +14,10 @@ const { version } = JSON.parse(
 ) as { version: string };
 
 const root = fileURLToPath(new URL(".", import.meta.url));
+// Upstream's HTTP harness suite drives the Claude/Codex CLI fixtures and asserts their prompts on every turn. This
+// native-only build removes those engines, so the suite is legacy coverage: run it only when a checkout deliberately
+// re-enables them, never as part of the native default.
+const legacyEngineTests = process.env.OMB_LEGACY_ENGINE_TESTS === "1" ? [] : ["server/index.test.ts"];
 const include = [
   "evals/**/*.test.ts",
   "server/**/*.test.ts",
@@ -35,7 +39,7 @@ export default defineConfig({
     environment: "node",
     include,
     // OMB_VITEST_E2E=host (CI's Windows and macOS shards) leaves the e2e files that run on Linux only.
-    exclude: [...configDefaults.exclude, ...(hostE2eOnly() ? portableE2eFiles(root, include) : [])],
+    exclude: [...configDefaults.exclude, ...legacyEngineTests, ...(hostE2eOnly() ? portableE2eFiles(root, include) : [])],
     setupFiles: ["server/testing/setup.ts"],
     // the suite spawns fake provider CLIs and a real harness server;
     // parallel files introduce load-sensitive flakes for no win

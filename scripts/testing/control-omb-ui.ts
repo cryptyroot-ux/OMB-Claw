@@ -463,9 +463,21 @@ export async function launchUi(
     checkpoint();
     const api = fixtureApi(fixture.info.url);
     await api("PATCH", "/api/config", { language: "en" });
+    // A native-only build has no fake Claude engine. When a loopback chat-completions provider is supplied, seed the
+    // fixture's bot on it so the renderer exercises the OMB-owned loop with a real HTTP model.
+    const nativeUrl = parentEnv.OMB_UI_NATIVE_URL?.trim() ?? "";
+    const nativeModel = parentEnv.OMB_UI_NATIVE_MODEL?.trim() ?? "";
+    if (nativeUrl && nativeModel) {
+      await api("PATCH", "/api/config", {
+        openaiCompat: { key: parentEnv.OMB_UI_NATIVE_KEY?.trim() || "synthetic-ui-key", url: nativeUrl, model: nativeModel },
+      });
+    }
     const { bots } = await api("GET", "/api/bots") as { bots: Array<{ id: string; defaultBot?: object }> };
     for (const bot of bots.filter((bot) => bot.defaultBot)) await api("PATCH", `/api/bots/${bot.id}`, { welcomed: true });
     const created = await runControlOmb(["new-bot", "--name", SEEDED_BOT, "--url", fixture.info.url]) as { bot: { id: string } };
+    if (nativeUrl && nativeModel) {
+      await runControlOmb(["set-model", "--bot", created.bot.id, "--instance", "openaiCompat", "--model", nativeModel, "--url", fixture.info.url]);
+    }
     checkpoint();
     // stdout carries the handle and nothing else; Vite's port and dependency
     // notes would otherwise land there first.

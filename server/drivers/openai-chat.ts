@@ -14,7 +14,7 @@ import { allowsTool, parseToolScope } from "../../shared/tool-scope.ts";
 import { redactSecretsInText } from "../redact.ts";
 import { toolDetailPreview } from "../tool-summary.ts";
 import { ChatToolSessionError, mountChatTools, type ChatToolDefinition, type ChatToolSession, type ChatToolResult } from "./chat-mcp-tools.ts";
-import { assertImageTransport, chatImageBudget, chatToolImages, chatUserContent, type ChatContentPart } from "./chat-images.ts";
+import { assertImageTransport, chatImageBudget, chatToolImages, chatUserContent, type ChatContentPart, type ChatImagePart } from "./chat-images.ts";
 import { promptHalves, volatileContextNote, withContextNote } from "./prompt-split.ts";
 import { createChatToolApproval, refusal } from "./chat-tool-approval.ts";
 import { ChatProtocolError, ChatReasoningDetails, ChatToolCalls, object, type ChatToolCall } from "./openai-chat-protocol.ts";
@@ -28,6 +28,7 @@ import { classifyContinuable, writeTurnHandoff } from "../turn-continuation.ts";
 import { KEY_REJECTED_REASON, keyRejected, noteKeyAccepted, noteKeyRejected, rejectsKey } from "../key-rejections.ts";
 import type { AgentEngine, CapabilityGrant } from "../agent-runtime/contracts.ts";
 import { createChatCapabilitySession } from "../agent-runtime/chat-capability-runtime.ts";
+import { announcesAction, MAX_ANNOUNCEMENT_NUDGES, NUDGE_ANNOUNCED_ACTION } from "../agent-runtime/announcement.ts";
 
 export interface OpenAIChatMessage {
   role: "system" | "user" | "assistant" | "tool";
@@ -148,7 +149,6 @@ class UnsupportedChatToolsError extends Error {}
 
 const MAX_CHAT_ROUNDS = 64;
 const MAX_TURN_TOOL_CALLS = 200;
-const MAX_ANNOUNCEMENT_NUDGES = 3;
 const stoppedAfter = (count: string) =>
   `Stopped after ${count} without a final answer. The steps so far already ran, so ask only for what's left.`;
 
@@ -197,19 +197,8 @@ function replayDelivered(
 }
 
 const CORRECTIVE_ROUND = "[OpenMausBot: a tool call in this turn failed (its result is marked ok:false). Re-run the failed operations with corrected inputs where possible, check the results, then give your final answer. Do not report results you did not get.]";
-const NUDGE_ANNOUNCED_ACTION = "You said what you would do next but called no tool. Use your tools for only the remaining work, or reply with verified results if nothing is left to do. Never repeat an operation that succeeded, was denied, or may already have taken effect; inspect its state instead. Do not retry a destructive operation.";
 
-export function announcesAction(text: string): boolean {
-  const reply = text.trim();
-  if (!reply || reply.length > 4_000 || reply.includes("?")) return false;
-  if (reply.length > 400) {
-    const tail = reply.split(/\n\s*\n/).at(-1)!.trim();
-    return tail.length <= 400 && /^(?:let me|i['\u2019]ll|i will|i(?:['\u2019]m| am) going to)\s+(?:now\s+)?(?:execute|send|type|press|launch|open|check|inspect|read|fetch|run|create|write|verify)\b/i.test(tail);
-  }
-  return /(?:[:\u2014\u2013]|\.\.\.|\u2026)$/.test(reply) ||
-    /^(?:checking|let me(?! know\b)|i'll|i will|i'm going to|i am going to|opening|pulling|looking|searching|navigating|reading|fetching|loading|now (?:i'll|let me|opening|checking|pulling|reading))\b/i.test(reply) ||
-    /^i(?:['\u2019]m| am)\b[^.!?\n]*\band (?:i )?will\s+(?:launch|open|check|pull|look|search|navigate|read|fetch|load|run|inspect)\b/i.test(reply);
-}
+export { announcesAction };
 
 const TEXT_ONLY_ATTACHMENT_NOTE = "[The person attached image(s), but this model cannot see images. Say so if the request depends on them.]";
 const TEXT_ONLY_SCREENSHOT_NOTE = "[Screenshot not shown: this model cannot see images. Read the page with a snapshot or a text tool instead.]";
@@ -634,11 +623,25 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         };
 
         try {
-          const userMessage = messages.at(-1);
-          const nativeText = userMessage?.content;
-          if (turn.images?.length || messages.some((message) => Array.isArray(message.content)) || typeof nativeText !== "string") {
-            throw new ChatProtocolError("The native runtime does not yet represent image or structured input; this turn was not sent.");
+          if (messages.slice(0, -1).some((message) => Array.isArray(message.content))) {
+            throw new ChatProtocolError("The native runtime cannot replay structured content from earlier turns; this turn was not sent.");
           }
+          const composed = messages.at(-1)?.content;
+          if (typeof composed !== "string" && !Array.isArray(composed)) {
+            throw new ChatProtocolError("The native runtime received no user content for this turn; it was not sent.");
+          }
+          const nativeText = typeof composed === "string"
+            ? composed
+            : composed.find((part) => part.type === "text")?.text ?? turn.text;
+          const nativeImages = turn.images?.length
+            ? (chatUserContent(turn) as ChatContentPart[])
+                .filter((part): part is ChatImagePart => part.type === "image_url")
+                .map((part) => {
+                  const match = /^data:([^;]+);base64,(.*)$/.exec(part.image_url.url);
+                  if (!match) throw new ChatProtocolError("The image transport is invalid; this turn was not sent.");
+                  return { mimeType: match[1]!, data: match[2]! };
+                })
+            : [];
 
           const parsed = parseToolScope(turn.toolScope);
           if (!parsed.ok) throw new Error(parsed.error);
@@ -734,6 +737,8 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             grant,
             capabilities: capabilitySession,
             signal: abort.signal,
+            ...(nativeImages.length ? { images: nativeImages } : {}),
+            ...(options.nudgeAnnouncedAction ? { nudgeAnnouncedAction: true } : {}),
           });
           await handle.done;
           if (!completed) finish(false, abort.signal.aborted ? "interrupted" : "error");

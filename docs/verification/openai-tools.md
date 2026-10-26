@@ -5,6 +5,12 @@ isolated harness. It uses an offline loopback provider and a synthetic stdio
 MCP server that can write exactly one file in the fixture's disposable home.
 It needs no provider account, API key, browser, or desktop access.
 
+OpenAI-compatible, Groq, Meta, MiniMax, Mistral, Cerebras and xAI API turns all
+run the OMB-owned native loop, so the assertions are behavior-level rather than
+legacy request-count checks. Request counters are scoped to the bot under test:
+a failed run also reports an incident to the Chief, whose turn lands on the same
+loopback provider.
+
 Run the permanent acceptance test:
 
 ```sh

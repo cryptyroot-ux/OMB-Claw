@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "../drivers/retry.ts";
+import { announcesAction, MAX_ANNOUNCEMENT_NUDGES, NUDGE_ANNOUNCED_ACTION } from "./announcement.ts";
 import type {
   AgentEngine,
   AgentEvent,
@@ -12,12 +13,15 @@ import type {
   CapabilityResult,
   ModelAdapter,
   ModelAdapterError,
+  ModelContentPart,
   ModelMessage,
   ModelToolCall,
 } from "./contracts.ts";
 
 const MAX_MODEL_ROUNDS = 64;
 const MAX_TOOL_CALLS = 200;
+/** Mirrors the chat image budget: 32 MiB of encoded base64 per run. */
+const MAX_ENCODED_IMAGE_BYTES = Math.ceil(32 * 1024 * 1024 / 3) * 4;
 
 class AgentRuntimeError extends Error {
   readonly code: string;
@@ -108,8 +112,21 @@ export function createAgentEngine(dependencies: {
         let stopReason: string | null = null;
         let failure: unknown;
         let sessionClosed = false;
-        const messages: ModelMessage[] = [...request.messages, { role: "user", content: request.text }];
+        const initialImages = request.images ?? [];
+        let encodedImages = initialImages.reduce((total, image) => total + image.data.length, 0);
+        if (encodedImages > MAX_ENCODED_IMAGE_BYTES) {
+          throw new AgentRuntimeError("image_budget_exceeded", "Turn image budget exceeded (32 MiB encoded); the turn was not sent.");
+        }
+        const userContent: ModelMessage["content"] = initialImages.length
+          ? [
+              { type: "text", text: request.text },
+              ...initialImages.map((image): ModelContentPart => ({ type: "image", mimeType: image.mimeType, data: image.data })),
+            ]
+          : request.text;
+        const messages: ModelMessage[] = [...request.messages, { role: "user", content: userContent }];
         const seenCallIds = new Set<string>();
+        let nudges = 0;
+        let callsAtNudge = -1;
 
         const progress = () => dependencies.store.updateRunProgress(runId, { modelRounds, toolCalls, updatedAt: Date.now() });
         const updateStatus = (next: AgentRunStatus, code?: string) => {
@@ -267,6 +284,19 @@ export function createAgentEngine(dependencies: {
                   throw new AgentRuntimeError("unsupported_capability", "The capability returned an image result the selected model cannot receive");
                 }
                 messages.push({ role: "tool", content: JSON.stringify({ ok: result.ok, result: result.content }), toolCallId: call.callId });
+                if (result.images?.length) {
+                  encodedImages += result.images.reduce((total, image) => total + image.data.length, 0);
+                  if (encodedImages > MAX_ENCODED_IMAGE_BYTES) {
+                    throw new AgentRuntimeError("image_budget_exceeded", "Tool images exceeded the 32 MiB encoded budget for this run.");
+                  }
+                  messages.push({
+                    role: "user",
+                    content: [
+                      { type: "text", text: `Screenshot result from tool call ${call.callId}:` },
+                      ...result.images.map((image): ModelContentPart => ({ type: "image", mimeType: image.mimeType, data: image.data })),
+                    ],
+                  });
+                }
               }
               continue;
             }
@@ -274,6 +304,18 @@ export function createAgentEngine(dependencies: {
             if (!responseText.trim()) throw modelEventFailure("The model returned an empty final answer");
             if (finishReason && finishReason !== "stop") throw modelEventFailure(`The model did not finish the response (${finishReason})`);
             if (capabilityFailure) throw new AgentRuntimeError("capability_failed", "One or more capabilities failed or were denied; the run is not a success receipt");
+            if (request.nudgeAnnouncedAction && toolDescriptors.length > 0 && announcesAction(responseText)) {
+              if (nudges >= MAX_ANNOUNCEMENT_NUDGES) {
+                throw new AgentRuntimeError("incomplete_action", `Stopped after ${MAX_ANNOUNCEMENT_NUDGES} announcement nudges without a verified final answer. Earlier operations may have taken effect; inspect their state and continue only the remaining work.`);
+              }
+              if (callsAtNudge === seenCallIds.size) {
+                throw new AgentRuntimeError("incomplete_action", "The model announced another action without tool progress after a nudge. The task is incomplete; earlier operations may have taken effect. Inspect their state before continuing.");
+              }
+              nudges += 1;
+              callsAtNudge = seenCallIds.size;
+              messages.push({ role: "assistant", content: responseText }, { role: "user", content: NUDGE_ANNOUNCED_ACTION });
+              continue;
+            }
             stopReason = finishReason;
             completed = true;
             break;

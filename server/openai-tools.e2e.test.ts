@@ -148,17 +148,20 @@ it.each(["openaiCompat", "groq", "meta"] as const)("%s runs structured MCP calls
       const memoryDirectory = join(fixture.info.dataDir, "workspaces", bot.id);
       mkdirSync(memoryDirectory, { recursive: true });
       writeFileSync(join(memoryDirectory, "MEMORY.md"), "# Memory\n- Fixture prefers concise replies.\n");
-      const before = requests.length;
+      // A failed run also reports an incident to the chief, whose turn lands on the same loopback provider. Scope
+      // the counters to this bot so another bot's turn cannot change what this scenario observes.
+      const mine = () => requests.filter((request) => delivered(request).system.includes(`You are ${bot.name},`));
+      const before = mine().length;
       expect((await control(["send", "--bot", bot.id, "--task", bot.activeTaskId, "--text", "Write the verification artifact if a structured tool is requested."])).success).toBe(true);
       const wait = () => control(["wait", "--bot", bot.id, "--task", bot.activeTaskId, "--timeout", "20"]);
       let settled = await wait();
       if (["allow", "deny", "cancel", "selected", "announced"].includes(mode)) {
-        expect(settled.status, JSON.stringify({ tools: requests[before]?.tools?.map((tool) => tool.function.name), messages: settled.messages })).toBe("needs-user");
+        expect(settled.status, JSON.stringify({ tools: mine()[before]?.tools?.map((tool) => tool.function.name), messages: settled.messages })).toBe("needs-user");
         expect(existsSync(artifact)).toBe(false);
-        expect(requests).toHaveLength(before + (mode === "announced" ? 2 : 1));
+        expect(mine()).toHaveLength(before + (mode === "announced" ? 2 : 1));
         if (mode === "announced") {
-          expect(requests[before + 1]!.messages.at(-2)).toEqual({ role: "assistant", content: ANNOUNCEMENT });
-          expect(requests[before + 1]!.messages.at(-1)).toMatchObject({ role: "user", content: expect.stringContaining("called no tool") });
+          expect(mine()[before + 1]!.messages.at(-2)).toEqual({ role: "assistant", content: ANNOUNCEMENT });
+          expect(mine()[before + 1]!.messages.at(-1)).toMatchObject({ role: "user", content: expect.stringContaining("called no tool") });
         }
         const state = await api("GET", "/api/bots");
         const current = state.bots.find((item: any) => item.id === bot.id);
@@ -169,8 +172,8 @@ it.each(["openaiCompat", "groq", "meta"] as const)("%s runs structured MCP calls
         settled = await wait();
       }
       const messages = await control(["messages", "--bot", bot.id, "--task", bot.activeTaskId, "--limit", "20"]);
-      const first = delivered(requests[before]!);
-      expectMemoryInTurn(requests[before]!, "Write the verification artifact if a structured tool is requested.");
+      const first = delivered(mine()[before]!);
+      expectMemoryInTurn(mine()[before]!, "Write the verification artifact if a structured tool is requested.");
       if (mode === "ordinary") {
         // the earlier modes' bots are this bot's teammates
         expect(first.system).not.toContain(AVAILABILITY);
@@ -180,8 +183,8 @@ it.each(["openaiCompat", "groq", "meta"] as const)("%s runs structured MCP calls
       expect(first.all).not.toContain("File locations for this bot");
       expect(first.all).not.toContain("read its exact SKILL.md path above with your file tools");
       if (["allow", "deny", "selected", "announced"].includes(mode)) {
-        expect(requests).toHaveLength(before + (mode === "announced" ? 3 : 2));
-        const continued = requests.at(-1)!;
+        expect(mine()).toHaveLength(before + (mode === "announced" ? 3 : 2));
+        const continued = mine().at(-1)!;
         if (mode !== "announced") expect(delivered(continued)).toEqual(first);
         const result = continued.messages.find((message) => message.role === "tool");
         expect(result?.tool_call_id).toBe("fixture-call");
@@ -191,14 +194,14 @@ it.each(["openaiCompat", "groq", "meta"] as const)("%s runs structured MCP calls
           expect(readFileSync(artifact, "utf8")).toBe("verified");
           expect(result?.content).toContain("created verification artifact");
           expect(messages.messages.some((message: any) => message.text?.includes("The artifact was created."))).toBe(true);
-          if (mode === "selected") expect(requests[before]!.tools?.map((tool) => tool.function.name)).toEqual(["selected_write_file"]);
+          if (mode === "selected") expect(mine()[before]!.tools?.map((tool) => tool.function.name)).toEqual(["selected_write_file"]);
         } else {
           expect(settled.status).toBe("failed");
           expect(result?.content).toMatch(/denied/i);
           expect(existsSync(artifact)).toBe(false);
         }
       } else {
-        expect(requests).toHaveLength(before + 1);
+        expect(mine()).toHaveLength(before + 1);
         expect(existsSync(artifact)).toBe(false);
         if (mode === "cancel") {
           expect(messages.messages.some((message: any) => message.card?.dismissed && message.card.answered === "deny")).toBe(true);
@@ -207,7 +210,7 @@ it.each(["openaiCompat", "groq", "meta"] as const)("%s runs structured MCP calls
         if (mode === "text") expect(messages.messages.some((message: any) => message.text?.includes("fixture-call"))).toBe(true);
       }
       if (mode === "tools-off" || mode === "scope-empty") {
-        expect(requests[before]).not.toHaveProperty("tools");
+        expect(mine()[before]).not.toHaveProperty("tools");
         expect(existsSync(startupMarker)).toBe(false);
         if (mode === "tools-off") {
           expect(first.all).not.toContain("Use memory_update");
@@ -216,7 +219,7 @@ it.each(["openaiCompat", "groq", "meta"] as const)("%s runs structured MCP calls
         }
         expect(messages.messages.some((message: any) => message.tool || message.card)).toBe(false);
       }
-      evidence.push({ scenario: mode, status: settled.status, artifactExists: existsSync(artifact), completionRequests: requests.length - before, mcpStarted: existsSync(startupMarker) });
+      evidence.push({ scenario: mode, status: settled.status, artifactExists: existsSync(artifact), completionRequests: mine().length - before, mcpStarted: existsSync(startupMarker) });
       if (mode === "ordinary" || mode === "tools-off") {
         const preview = await api("GET", `/api/bots/${bot.id}/system-prompt`);
         const previewText = JSON.stringify(preview.sections);
@@ -229,8 +232,8 @@ it.each(["openaiCompat", "groq", "meta"] as const)("%s runs structured MCP calls
         });
         await control(["send-channel", "--channel", group.id, "--text", "Greet this room."]);
         expect((await control(["wait", "--channel", group.id, "--timeout", "20"])).status).toBe("settled");
-        const room = delivered(requests.at(-1)!);
-        expectMemoryInTurn(requests.at(-1)!, `Greet this room.\n\n(Reply to the conversation above as API tool ${mode}.)`);
+        const room = delivered(mine().at(-1)!);
+        expectMemoryInTurn(mine().at(-1)!, `Greet this room.\n\n(Reply to the conversation above as API tool ${mode}.)`);
         expect(room.all).not.toContain("File locations for this bot");
         expect(room.all).not.toContain("update it with your file tools");
         await control(["messages", "--channel", group.id, "--limit", "10"]);

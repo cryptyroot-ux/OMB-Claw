@@ -1,6 +1,7 @@
 // xAI API driver over the OpenAI chat-completions contract, with the shared retry policy.
 import type { ProviderDriver } from "../contracts.ts";
 import { createOpenAIChatRuntime } from "./openai-chat.ts";
+import { createNativeChatEngine } from "./native-engine.ts";
 
 const DRIVER_KIND = "grok";
 const DEFAULT_URL = "https://api.x.ai/v1";
@@ -40,9 +41,14 @@ export const GrokDriver: ProviderDriver<GrokConfig> = {
   async create(input) {
     const { config } = input;
     const apiKey = input.environment[config.apiKeyEnv] ?? process.env[config.apiKeyEnv] ?? "";
+    const nativeAgentEngine = createNativeChatEngine({
+      providerId: DRIVER_KIND, apiUrl: config.url, apiKey, catalog: () => MODELS,
+      toolsEnabled: config.tools !== false, imageInput: () => true,
+    });
     return createOpenAIChatRuntime({
       input,
       driverKind: DRIVER_KIND,
+      nativeAgentEngine,
       apiKey,
       apiUrl: config.url,
       tools: config.tools,

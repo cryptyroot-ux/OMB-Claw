@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { ModelCatalog, ProviderDriver } from "../contracts.ts";
 import { createOpenAIChatRuntime } from "./openai-chat.ts";
+import { createNativeChatEngine } from "./native-engine.ts";
 
 const DEFAULT_URL = "https://api.groq.com/openai/v1";
 // Production text models: https://console.groq.com/docs/models
@@ -84,8 +85,13 @@ export const GroqDriver: ProviderDriver<GroqConfig> = {
       } catch {}
     };
     if (apiKey) void refreshModels();
+    const nativeAgentEngine = createNativeChatEngine({
+      providerId: "groq", apiUrl: config.url, apiKey, catalog: () => catalog, reasoning: true,
+      toolsEnabled: config.tools !== false, imageInput: () => false,
+    });
     return createOpenAIChatRuntime({
       input, driverKind: "groq", apiKey, apiUrl: config.url,
+      nativeAgentEngine,
       tools: config.tools, models: () => catalog, refreshModels, reasoning: true,
       reasoningReplayField: "reasoning", computerUse: true, imageInput: () => false,
       requestBody: (model, messages, stream) => ({ model, messages, stream }),
