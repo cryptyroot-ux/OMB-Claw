@@ -29,6 +29,13 @@ function gateNeeds(runtime: string) {
 }
 
 describe("CI concurrency", () => {
+  it("gives full TypeScript builds enough Node heap in both checkout modes", () => {
+    for (const jobName of ["static", "foss"]) {
+      const step = workflow.jobs[jobName].steps.find((candidate) => candidate.run === "pnpm typecheck");
+      expect(step?.env?.NODE_OPTIONS, jobName).toBe("--max-old-space-size=4096");
+    }
+  });
+
   it("supersedes old PR checks but never cancels a running main or merge-queue run", () => {
     expect(workflow.on.push.branches).toEqual(["main"]);
     expect(workflow.on).toHaveProperty("merge_group");

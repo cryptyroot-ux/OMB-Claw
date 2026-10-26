@@ -909,6 +909,7 @@ describe("createAgentEngine", () => {
     const store = testRunStore();
     const capabilities = testCapabilitySession([descriptor("read-a")], new Set(), new Set(), new Set(), new Set(), new Set(["call-a"]));
     const engine = createAgentEngine({ adapters: registryFor(modelAdapter), store });
+    const outputGrant: CapabilityGrant = { ...grant, allowed: new Set([...grant.allowed, "tool_output_read"]) };
 
     const handle = await engine.run({
       botId: "bot-1",
@@ -916,7 +917,7 @@ describe("createAgentEngine", () => {
       text: "Read the large fixture.",
       messages: userMessages,
       providerModel: { providerId: "fixture", modelId: "fixture-model" },
-      grant,
+      grant: outputGrant,
       capabilities,
       signal: new AbortController().signal,
     });
@@ -937,6 +938,38 @@ describe("createAgentEngine", () => {
     const readPayload = JSON.parse(readTool?.content as string) as { result: string };
     expect(JSON.parse(readPayload.result)).toMatchObject({ callId: "call-a", offset: 8_000, limit: 100, totalChars: 20_000, nextOffset: 8_100 });
     expect((JSON.parse(readPayload.result) as { content: string }).content).toHaveLength(100);
+  });
+
+  it("does not expose tool_output_read when the capability grant excludes it", async () => {
+    const modelAdapter = testModelAdapter([
+      [
+        { type: "tool_calls", calls: [{ id: "call-a", name: "read-a", arguments: { value: "a" } }] },
+        { type: "completed", finishReason: "tool_calls" },
+      ],
+      [
+        { type: "tool_calls", calls: [{ id: "call-read", name: "tool_output_read", arguments: { callId: "call-a" } }] },
+        { type: "completed", finishReason: "tool_calls" },
+      ],
+    ]);
+    const store = testRunStore();
+    const capabilities = testCapabilitySession([descriptor("read-a")], new Set(), new Set(), new Set(), new Set(), new Set(["call-a"]));
+    const engine = createAgentEngine({ adapters: registryFor(modelAdapter), store });
+
+    const handle = await engine.run({
+      botId: "bot-1",
+      threadId: "thread-1",
+      text: "Try to read a stored result without that grant.",
+      messages: userMessages,
+      providerModel: { providerId: "fixture", modelId: "fixture-model" },
+      grant,
+      capabilities,
+      signal: new AbortController().signal,
+    });
+    await handle.done;
+
+    expect(modelAdapter.requests[1]!.tools.map((tool) => tool.name)).not.toContain("tool_output_read");
+    expect(store.getRun(handle.runId)).toMatchObject({ status: "failed", failureCode: "capability_not_granted" });
+    expect(capabilities.invocations).toEqual(["call-a"]);
   });
 
   it("steers a running turn before the next round and refuses after it finishes", async () => {

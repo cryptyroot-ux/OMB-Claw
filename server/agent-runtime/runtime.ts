@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "../drivers/retry.ts";
 import { announcesAction, MAX_ANNOUNCEMENT_NUDGES, NUDGE_ANNOUNCED_ACTION } from "./announcement.ts";
+import { createRunScopedCapabilitySession, TOOL_OUTPUT_READ_CAPABILITY } from "./capability-runtime.ts";
 import type {
   AgentEngine,
   AgentEvent,
@@ -10,7 +11,6 @@ import type {
   AgentRunStatus,
   AgentRunStore,
   CapabilityCall,
-  CapabilityDescriptor,
   CapabilityResult,
   ModelAdapter,
   ModelAdapterError,
@@ -68,26 +68,6 @@ const DEFAULT_CONTEXT_WINDOW = 128_000;
 const SUMMARY_CLIP_CHARS = 2_000;
 const SUMMARY_TRANSCRIPT_CHARS = 120_000;
 const TOOL_OUTPUT_PROMPT_CHARS = 8_000;
-const TOOL_OUTPUT_READ_CHARS = 20_000;
-const TOOL_OUTPUT_READ = "tool_output_read";
-const TOOL_OUTPUT_READ_DEFINITION: CapabilityDescriptor = {
-  id: TOOL_OUTPUT_READ,
-  name: TOOL_OUTPUT_READ,
-  description: "Read part of a tool output that was truncated to fit the model window. Use the callId from the output's outputRef.",
-  schema: {
-    type: "object",
-    properties: {
-      callId: { type: "string" },
-      offset: { type: "integer", minimum: 0 },
-      limit: { type: "integer", minimum: 1, maximum: TOOL_OUTPUT_READ_CHARS },
-    },
-    required: ["callId"],
-    additionalProperties: false,
-  },
-  risk: "read",
-  sideEffect: false,
-  timeoutMs: 5_000,
-};
 
 const SUMMARY_PROMPT = [
   "You are compacting an agent conversation so it can continue in a smaller context window.",
@@ -192,6 +172,7 @@ export function createAgentEngine(dependencies: {
       if (activeByThread.has(request.threadId)) throw new AgentRuntimeError("thread_busy", "A native run is already active for this thread");
 
       const runId = randomUUID();
+      const runCapabilities = createRunScopedCapabilitySession(request.capabilities, { runId, store: dependencies.store });
       const startedAt = Date.now();
       dependencies.store.createRun({
         runId,
@@ -247,7 +228,7 @@ export function createAgentEngine(dependencies: {
         const closeSession = async () => {
           if (sessionClosed) return;
           sessionClosed = true;
-          await request.capabilities.close();
+          await runCapabilities.close();
         };
 
         try {
@@ -311,29 +292,8 @@ export function createAgentEngine(dependencies: {
             emit(request.threadId, { type: "run.compacted", runId, summary, firstKeptIndex: cut, tokenEstimate, trigger });
             return true;
           };
-          const readStoredOutput = (call: CapabilityCall): CapabilityResult => {
-            const args = (call.arguments ?? {}) as { callId?: unknown; offset?: unknown; limit?: unknown };
-            if (typeof args.callId !== "string" || !args.callId.trim()) {
-              return { callId: call.callId, ok: false, content: "tool_output_read needs the callId whose output was truncated.", error: "invalid_arguments" };
-            }
-            const record = dependencies.store.readToolOutput?.(runId, args.callId);
-            if (!record) {
-              return { callId: call.callId, ok: false, content: `No stored output exists for call ${args.callId}.`, error: "not_found" };
-            }
-            const offset = typeof args.offset === "number" && Number.isInteger(args.offset) && args.offset >= 0 ? args.offset : 0;
-            const requested = typeof args.limit === "number" && Number.isInteger(args.limit) && args.limit > 0 ? args.limit : TOOL_OUTPUT_READ_CHARS;
-            const limit = Math.min(requested, TOOL_OUTPUT_READ_CHARS);
-            const content = record.content.slice(offset, offset + limit);
-            const nextOffset = offset + content.length < record.content.length ? offset + content.length : null;
-            return {
-              callId: call.callId,
-              ok: true,
-              content: JSON.stringify({ callId: args.callId, offset, limit, totalChars: record.content.length, content, nextOffset }),
-            };
-          };
           let allowTools = true;
           let sizeRetries = 0;
-          const truncatedOutputs = new Set<string>();
           while (modelRounds < MAX_MODEL_ROUNDS) {
             signal.throwIfAborted();
             if (control.steers.length) {
@@ -346,10 +306,7 @@ export function createAgentEngine(dependencies: {
             ) {
               await compact("auto");
             }
-            let toolDescriptors = allowTools ? request.capabilities.list(request.grant) : [];
-            if (allowTools && truncatedOutputs.size > 0 && dependencies.store.readToolOutput) {
-              toolDescriptors = [...toolDescriptors, TOOL_OUTPUT_READ_DEFINITION];
-            }
+            let toolDescriptors = allowTools ? runCapabilities.list(request.grant) : [];
             if (toolDescriptors.length > 0 && modelCapabilities.tools !== "supported") {
               throw new AgentRuntimeError("unsupported_capability", "The selected model is not verified for structured tool calls");
             }
@@ -409,7 +366,7 @@ export function createAgentEngine(dependencies: {
                   && !capabilityDispatched
                   && !signal.aborted
                 ) {
-                  const offered = request.capabilities.list(request.grant);
+                  const offered = runCapabilities.list(request.grant);
                   if (offered.length > 0 && offered.every((tool) => tool.optional === true)) {
                     allowTools = false;
                     toolDescriptors = [];
@@ -474,7 +431,7 @@ export function createAgentEngine(dependencies: {
                 });
               }
               for (const item of batch) {
-                if (item.call.capabilityId !== TOOL_OUTPUT_READ) request.capabilities.validate(item.call, request.grant);
+                runCapabilities.validate(item.call, request.grant);
               }
 
               messages.push({ role: "assistant", content: responseText || null, toolCalls: responseCalls });
@@ -482,7 +439,6 @@ export function createAgentEngine(dependencies: {
               const batchImages: ModelContentPart[] = [];
               for (const { call, descriptor } of batch) {
                 signal.throwIfAborted();
-                const internalRead = call.capabilityId === TOOL_OUTPUT_READ;
                 const dispatchedAt = Date.now();
                 toolCalls++;
                 progress();
@@ -494,11 +450,11 @@ export function createAgentEngine(dependencies: {
                   status: "dispatching",
                   startedAt: dispatchedAt,
                 });
-                if (!internalRead) capabilityDispatched = true;
+                capabilityDispatched = true;
 
                 let result: CapabilityResult;
                 try {
-                  result = internalRead ? readStoredOutput(call) : await request.capabilities.invoke(call, { grant: request.grant, signal });
+                  result = await runCapabilities.invoke(call, { grant: request.grant, signal });
                 } catch {
                   const uncertain: CapabilityResult = {
                     callId: call.callId,
@@ -523,23 +479,15 @@ export function createAgentEngine(dependencies: {
                 }
 
                 dependencies.store.settleCapabilityCall(runId, call.callId, result.ok ? "succeeded" : "failed", Date.now());
-                if (!result.ok && !internalRead) capabilityFailure = true;
+                if (!result.ok) capabilityFailure = true;
                 emit(request.threadId, { type: "tool.result", runId, callId: call.callId, result });
                 if (result.images?.length && modelCapabilities.imageInput !== "supported") {
                   throw new AgentRuntimeError("unsupported_capability", "The capability returned an image result the selected model cannot receive");
                 }
                 let promptResult = result.content;
                 let outputRef: Record<string, unknown> | undefined;
-                if (!internalRead && result.content.length > TOOL_OUTPUT_PROMPT_CHARS && dependencies.store.recordToolOutput) {
-                  dependencies.store.recordToolOutput({
-                    runId,
-                    callId: call.callId,
-                    content: result.content,
-                    bytes: Buffer.byteLength(result.content),
-                    createdAt: Date.now(),
-                  });
-                  truncatedOutputs.add(call.callId);
-                  promptResult = `${result.content.slice(0, TOOL_OUTPUT_PROMPT_CHARS)}\n\n[Output truncated: ${TOOL_OUTPUT_PROMPT_CHARS} of ${result.content.length} chars shown. Full output is stored as call ${call.callId}. Use ${TOOL_OUTPUT_READ} with callId "${call.callId}" and offset/limit to read more.]`;
+                if (result.content.length > TOOL_OUTPUT_PROMPT_CHARS && runCapabilities.recordToolOutput(call.callId, result.content)) {
+                  promptResult = `${result.content.slice(0, TOOL_OUTPUT_PROMPT_CHARS)}\n\n[Output truncated: ${TOOL_OUTPUT_PROMPT_CHARS} of ${result.content.length} chars shown. Full output is stored as call ${call.callId}. Use ${TOOL_OUTPUT_READ_CAPABILITY} with callId "${call.callId}" and offset/limit to read more.]`;
                   outputRef = { callId: call.callId, totalChars: result.content.length, shownChars: TOOL_OUTPUT_PROMPT_CHARS, truncated: true };
                 }
                 messages.push({

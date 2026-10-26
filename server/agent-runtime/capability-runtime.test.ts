@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { InMemoryCapabilitySession } from "./capability-runtime.ts";
-import type { CapabilityCall, CapabilityDescriptor, CapabilityGrant } from "./contracts.ts";
+import { createRunScopedCapabilitySession, InMemoryCapabilitySession } from "./capability-runtime.ts";
+import type { AgentRunStore, AgentToolOutputRecord, CapabilityCall, CapabilityDescriptor, CapabilityGrant } from "./contracts.ts";
 
 const grant: CapabilityGrant = {
   botId: "bot-1",
@@ -75,5 +75,44 @@ describe("InMemoryCapabilitySession", () => {
     const result = await session.invoke(call("c1", "read_file"), { grant, signal: new AbortController().signal });
     expect(result.ok).toBe(false);
     expect(result.error).toBe("closed");
+  });
+});
+
+describe("run-scoped tool output capability", () => {
+  it("mounts, validates, invokes, and closes output reads under the run grant", async () => {
+    const outputs = new Map<string, AgentToolOutputRecord>();
+    const store: Pick<AgentRunStore, "recordToolOutput" | "readToolOutput"> = {
+      recordToolOutput(record) {
+        outputs.set(`${record.runId}:${record.callId}`, record);
+      },
+      readToolOutput(runId, callId) {
+        return outputs.get(`${runId}:${callId}`);
+      },
+    };
+    const base = new InMemoryCapabilitySession();
+    base.register(descriptor("read_file"), async (invoked) => ({ callId: invoked.callId, ok: true, content: "read" }));
+    const session = createRunScopedCapabilitySession(base, { runId: "run-1", store });
+    const stored = session.recordToolOutput("source-call", "abcdefghijklmnopqrstuvwxyz");
+    const outputCall: CapabilityCall = {
+      runId: "run-1",
+      callId: "reader-call",
+      capabilityId: "tool_output_read",
+      arguments: { callId: "source-call", offset: 5, limit: 4 },
+      botId: "bot-1",
+      threadId: "thread-1",
+    };
+
+    expect(stored).toBe(true);
+    expect(session.list(grant).map((item) => item.id)).toEqual(["read_file", "tool_output_read"]);
+    expect(session.list(restrictedGrant).map((item) => item.id)).toEqual(["read_file"]);
+    expect(() => session.validate(outputCall, restrictedGrant)).toThrow("Capability not allowed: tool_output_read");
+    expect(() => session.validate(outputCall, grant)).not.toThrow();
+
+    const result = await session.invoke(outputCall, { grant, signal: new AbortController().signal });
+    expect(result).toMatchObject({ callId: "reader-call", ok: true });
+    expect(JSON.parse(result.content)).toEqual({ callId: "source-call", offset: 5, limit: 4, totalChars: 26, content: "fghi", nextOffset: 9 });
+
+    await session.close();
+    expect(session.list(grant)).toEqual([]);
   });
 });

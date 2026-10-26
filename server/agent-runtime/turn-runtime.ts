@@ -7,7 +7,7 @@ import { ChatProtocolError } from "../drivers/openai-chat-protocol.ts";
 import type { createChatToolApproval } from "../drivers/chat-tool-approval.ts";
 import { toolSchemaProfileFor } from "../tool-schema-profile.ts";
 import { createChatCapabilitySession } from "./chat-capability-runtime.ts";
-import type { AgentEngine, CapabilityGrant } from "./contracts.ts";
+import type { AgentEngine, CapabilityGrant, CapabilitySession } from "./contracts.ts";
 
 export interface NativeSteerState {
   queue: string[];
@@ -40,6 +40,7 @@ export interface NativeTurnContext {
 export async function runNativeTurn(context: NativeTurnContext): Promise<void> {
   const { turn, messages, model, turnId, abort, approval, engine } = context;
   let tools: ChatToolSession | undefined;
+  let capabilitySession: CapabilitySession | undefined;
   let unsubscribe = () => {};
   let completed = false;
   let roundText = "";
@@ -107,7 +108,7 @@ export async function runNativeTurn(context: NativeTurnContext): Promise<void> {
     if (questionAllowed && !tools.definitions.some((definition) => definition.function.name === ASK_USER_TOOL)) {
       tools.definitions.push(ASK_USER_TOOL_DEFINITION);
     }
-    const capabilitySession = createChatCapabilitySession({ session: tools, approval });
+    capabilitySession = createChatCapabilitySession({ session: tools, approval });
 
     const grant: CapabilityGrant = {
       botId: turn.botId ?? "",
@@ -199,7 +200,8 @@ export async function runNativeTurn(context: NativeTurnContext): Promise<void> {
     approval.close();
     unsubscribe();
     try {
-      await tools?.close();
+      if (capabilitySession) await capabilitySession.close();
+      else await tools?.close();
     } catch {
       if (!completed) finish(false, "error", "Tool processes could not be stopped; their execution state is uncertain.");
     }

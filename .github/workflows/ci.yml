@@ -69,6 +69,8 @@ jobs:
       - name: Validate locale catalogs
         run: pnpm i18n:check
       - run: pnpm typecheck
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
       - run: pnpm lint
       - run: pnpm check:electron
       - name: production UI build
@@ -329,6 +331,8 @@ jobs:
       - name: Delete the enterprise folder
         run: rm -rf enterprise
       - run: pnpm typecheck
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
       - run: pnpm exec vitest run server/enterprise.test.ts server/brand.test.ts
       - name: The server boots and reports the open-source edition
         run: |
