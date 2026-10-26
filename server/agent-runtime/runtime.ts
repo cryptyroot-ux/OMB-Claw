@@ -61,7 +61,12 @@ export function createAgentEngine(dependencies: {
   readonly adapters: { resolve(ref: AgentRunRecord["providerModel"]): ModelAdapter };
   readonly store: AgentRunStore;
 }): AgentEngine {
-  const active = new Map<string, { readonly threadId: string; readonly controller: AbortController }>();
+  const active = new Map<string, {
+    readonly threadId: string;
+    readonly controller: AbortController;
+    readonly steers: string[];
+    finishing: boolean;
+  }>();
   const activeByThread = new Map<string, string>();
   const listeners = new Map<string, Set<(event: AgentEvent) => void>>();
 
@@ -98,7 +103,8 @@ export function createAgentEngine(dependencies: {
 
       const controller = new AbortController();
       const signal = AbortSignal.any([request.signal, controller.signal]);
-      active.set(runId, { threadId: request.threadId, controller });
+      const control = { threadId: request.threadId, controller, steers: [] as string[], finishing: false };
+      active.set(runId, control);
       activeByThread.set(request.threadId, runId);
 
       const done = Promise.resolve().then(async () => {
@@ -148,6 +154,9 @@ export function createAgentEngine(dependencies: {
           const modelCapabilities = adapter.capabilities(request.providerModel.modelId);
           while (modelRounds < MAX_MODEL_ROUNDS) {
             signal.throwIfAborted();
+            if (control.steers.length) {
+              for (const text of control.steers.splice(0)) messages.push({ role: "user", content: text });
+            }
             const toolDescriptors = request.capabilities.list(request.grant);
             if (toolDescriptors.length > 0 && modelCapabilities.tools !== "supported") {
               throw new AgentRuntimeError("unsupported_capability", "The selected model is not verified for structured tool calls");
@@ -302,6 +311,11 @@ export function createAgentEngine(dependencies: {
 
             if (!responseText.trim()) throw modelEventFailure("The model returned an empty final answer");
             if (finishReason && finishReason !== "stop") throw modelEventFailure(`The model did not finish the response (${finishReason})`);
+            if (control.steers.length) {
+              messages.push({ role: "assistant", content: responseText });
+              continue;
+            }
+            control.finishing = true;
             if (capabilityFailure) throw new AgentRuntimeError("capability_failed", "One or more capabilities failed or were denied; the run is not a success receipt");
             if (request.nudgeAnnouncedAction && toolDescriptors.length > 0 && announcesAction(responseText)) {
               if (nudges >= MAX_ANNOUNCEMENT_NUDGES) {
@@ -324,6 +338,7 @@ export function createAgentEngine(dependencies: {
         } catch (error) {
           failure = error;
         }
+        control.finishing = true;
 
         try {
           await closeSession();
@@ -350,13 +365,21 @@ export function createAgentEngine(dependencies: {
         if (activeByThread.get(request.threadId) === runId) activeByThread.delete(request.threadId);
       });
 
-      active.set(runId, { threadId: request.threadId, controller });
-      activeByThread.set(request.threadId, runId);
+      active.set(runId, control);
       return { runId, done };
     },
 
     async interrupt(runId) {
       active.get(runId)?.controller.abort(new DOMException("Native agent run interrupted", "AbortError"));
+    },
+
+    async steer(runId, text) {
+      const control = active.get(runId);
+      if (!control || control.finishing) return "refused";
+      const trimmed = text.trim();
+      if (!trimmed) return "refused";
+      control.steers.push(trimmed);
+      return "steered";
     },
 
     getState(runId) {

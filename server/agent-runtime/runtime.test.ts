@@ -637,6 +637,55 @@ describe("createAgentEngine", () => {
     expect(textOnly.requests).toHaveLength(1);
   });
 
+  it("steers a running turn before the next round and refuses after it finishes", async () => {
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const requests: ModelGenerateRequest[] = [];
+    const modelAdapter: TestModelAdapter = {
+      ...testModelAdapter([]),
+      requests,
+      async *generate(request) {
+        requests.push(request);
+        if (requests.length === 1) {
+          entered();
+          await held;
+          yield { type: "content.delta", kind: "assistant_text", delta: "First answer." };
+          yield { type: "completed", finishReason: "stop" };
+          return;
+        }
+        yield { type: "content.delta", kind: "assistant_text", delta: "Corrected answer." };
+        yield { type: "completed", finishReason: "stop" };
+      },
+    };
+    const store = testRunStore();
+    const engine = createAgentEngine({ adapters: registryFor(modelAdapter), store });
+
+    const handle = await engine.run({
+      botId: "bot-1",
+      threadId: "thread-1",
+      text: "Start the task.",
+      messages: userMessages,
+      providerModel: { providerId: "fixture", modelId: "fixture-model" },
+      grant,
+      capabilities: testCapabilitySession([descriptor("read-a")]),
+      signal: new AbortController().signal,
+    });
+    await started;
+    expect(await engine.steer(handle.runId, "Use the corrected value.")).toBe("steered");
+    release();
+    await handle.done;
+
+    expect(requests).toHaveLength(2);
+    expect(requests[1]?.messages.slice(-2)).toEqual([
+      { role: "assistant", content: "First answer." },
+      { role: "user", content: "Use the corrected value." },
+    ]);
+    expect(store.getRun(handle.runId)).toMatchObject({ status: "completed", modelRounds: 2 });
+    expect(await engine.steer(handle.runId, "Too late.")).toBe("refused");
+  });
+
   it("nudges an announced action and continues to a tool call", async () => {
     const modelAdapter = testModelAdapter([
       [

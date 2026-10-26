@@ -277,8 +277,10 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     approval: ReturnType<typeof createChatToolApproval>;
     /** Mid-turn input parked by adapter.steer, spliced in at the next round, never mid-tool-batch. */
     asides: string[];
-    /** This turn runs the OMB Agent Runtime; steering is not supported yet. */
+    /** This turn runs the OMB Agent Runtime; steering is forwarded to the live run. */
     native?: boolean;
+    /** Native steering lands here once the run exists; before that, text is queued. */
+    nativeSteer?: (text: string) => Promise<"steered" | "refused">;
     /** Set once the turn stops taking rounds: a later steer goes to the next turn instead. */
     ending: boolean;
   }>();
@@ -581,7 +583,11 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     });
     let resolveDone!: () => void;
     const done = new Promise<void>((resolve) => { resolveDone = resolve; });
-    const turnEntry = { abort, turnId, done, approval, asides: [] as string[], native: false, ending: false };
+    const turnEntry = {
+      abort, turnId, done, approval, asides: [] as string[], native: false,
+      nativeSteer: undefined as ((text: string) => Promise<"steered" | "refused">) | undefined,
+      ending: false,
+    };
     active.set(turn.threadId, turnEntry);
     emit({ ...base(turn.threadId, turnId), type: "turn.started" });
     emit({ ...base(turn.threadId, turnId), type: "session.started", sessionId: null, model });
@@ -589,6 +595,15 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     if (options.nativeAgentEngine && turn.agentEngine === "omb-native") {
       const nativeEngine = options.nativeAgentEngine;
       turnEntry.native = true;
+      const pendingSteers: string[] = [];
+      let steerNative: ((text: string) => Promise<"steered" | "refused">) | undefined;
+      turnEntry.nativeSteer = (text) => {
+        if (!steerNative) {
+          pendingSteers.push(text);
+          return Promise.resolve("steered");
+        }
+        return steerNative(text);
+      };
       void (async () => {
         let tools: ChatToolSession | undefined;
         let capabilitySession: ReturnType<typeof createChatCapabilitySession> | undefined;
@@ -738,11 +753,14 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             ...(nativeImages.length ? { images: nativeImages } : {}),
             ...(options.nudgeAnnouncedAction ? { nudgeAnnouncedAction: true } : {}),
           });
+          steerNative = (text) => nativeEngine.steer(handle.runId, text);
+          for (const text of pendingSteers.splice(0)) await steerNative(text);
           await handle.done;
           if (!completed) finish(false, abort.signal.aborted ? "interrupted" : "error");
         } catch (error) {
           finish(false, abort.signal.aborted ? "interrupted" : "error", asError(error).message);
         } finally {
+          turnEntry.ending = true;
           unsubscribe();
           approval.close();
           try {
@@ -1094,7 +1112,8 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         active.get(threadId)?.approval.answer(requestId, decision.behavior, decision.message, decision.always) ?? "unavailable",
       steer: async (threadId, text) => {
         const running = active.get(threadId);
-        if (!running || running.ending || running.native) return "refused";
+        if (!running || running.ending) return "refused";
+        if (running.native) return running.nativeSteer?.(text) ?? "refused";
         running.asides.push(text);
         return "steered";
       },

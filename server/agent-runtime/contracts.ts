@@ -220,6 +220,8 @@ export interface AgentEngine {
   readonly engineId: EngineId;
   run(request: AgentRunRequest): Promise<AgentRunHandle>;
   interrupt(runId: RunId): Promise<void>;
+  /** Queue a user correction for the next model round. Never interrupts a running tool batch. */
+  steer(runId: RunId, text: string): Promise<"steered" | "refused">;
   getState(runId: RunId): AgentRunRecord | undefined;
   onEvent(threadId: string, listener: (event: AgentEvent) => void): () => void;
 }

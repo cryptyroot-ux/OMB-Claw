@@ -167,14 +167,17 @@ describe("native ProviderAdapter acceptance", () => {
     expect(store.getRun(started!.runId)).toMatchObject({ status: "completed", modelRounds: 3, toolCalls: 2 });
   });
 
-  it("refuses steering on a native turn instead of claiming delivery", async () => {
+  it("accepts steering on a native turn and injects it into the next round", async () => {
+    const requests: Array<{ messages: Array<{ role: string; content: unknown }> }> = [];
     let release!: () => void;
     const held = new Promise<void>((resolve) => { release = resolve; });
     const server = createServer(async (request, response) => {
-      for await (const _part of request) { /* drain */ }
+      let body = "";
+      for await (const part of request) body += part.toString();
+      requests.push(JSON.parse(body));
       await held;
       jsonResponse(response, {
-        choices: [{ message: { content: "Native answer." }, finish_reason: "stop" }],
+        choices: [{ message: { content: requests.length === 1 ? "Native answer." : "Native answer after steer." }, finish_reason: "stop" }],
       });
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -227,11 +230,14 @@ describe("native ProviderAdapter acceptance", () => {
         model: "fixture-model",
         approvalMode: "full",
       });
-      expect(await runtime.adapter.steer?.("thread-steer", "An extra instruction.")).toBe("refused");
+      expect(await runtime.adapter.steer?.("thread-steer", "An extra instruction.")).toBe("steered");
     } finally {
       release();
     }
     await completed;
+
+    expect(requests).toHaveLength(2);
+    expect(requests[1]?.messages).toContainEqual({ role: "user", content: "An extra instruction." });
   });
 
   it("fails before contacting the provider when an attached image cannot be read", async () => {
