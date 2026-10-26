@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createAgentEngine } from "./runtime.ts";
 import type {
   AgentEvent,
+  AgentCompactionRecord,
   AgentRunRecord,
   AgentRunStore,
   CapabilityCallStatus,
@@ -21,14 +22,17 @@ import type {
 interface TestRunStore extends AgentRunStore {
   readonly runs: Map<string, AgentRunRecord>;
   readonly calls: Map<string, { readonly status: CapabilityCallStatus }>;
+  readonly compactions: AgentCompactionRecord[];
 }
 
 function testRunStore(): TestRunStore {
   const runs = new Map<string, AgentRunRecord>();
   const calls = new Map<string, { readonly status: CapabilityCallStatus }>();
+  const compactions: AgentCompactionRecord[] = [];
   return {
     runs,
     calls,
+    compactions,
     createRun(record) {
       runs.set(record.runId, record);
     },
@@ -52,6 +56,9 @@ function testRunStore(): TestRunStore {
       calls.set(`${runId}:${callId}`, { status });
     },
     recoverUnsettledRuns() {},
+    recordCompaction(record) {
+      compactions.push(record);
+    },
   };
 }
 
@@ -782,6 +789,94 @@ describe("createAgentEngine", () => {
 
     expect(requests).toHaveLength(3);
     expect(store.getRun(handle.runId)).toMatchObject({ status: "failed", failureCode: "request_too_large" });
+  });
+
+  it("summarizes older history when the prompt crosses the context budget", async () => {
+    const requests: ModelGenerateRequest[] = [];
+    const history: ModelMessage[] = [
+      { role: "system", content: "system prompt" },
+      ...Array.from({ length: 12 }, (_, index) => ({
+        role: index % 2 ? "assistant" as const : "user" as const,
+        content: `message ${index} ${"x".repeat(10_000)}`,
+      })),
+    ];
+    const modelAdapter: TestModelAdapter = {
+      ...testModelAdapter([], { ...supportedCapabilities, contextWindow: { status: "known", value: 32_000 } }),
+      requests,
+      async *generate(request) {
+        requests.push({ ...request, messages: [...request.messages] });
+        const compacting = typeof request.messages[0]?.content === "string"
+          && request.messages[0].content.includes("You are compacting an agent conversation");
+        yield {
+          type: "content.delta",
+          kind: "assistant_text",
+          delta: compacting ? "Objective, files, and test results preserved." : "Done.",
+        };
+        yield { type: "completed", finishReason: "stop" };
+      },
+    };
+    const store = testRunStore();
+    const engine = createAgentEngine({ adapters: registryFor(modelAdapter), store });
+
+    const handle = await engine.run({
+      botId: "bot-1",
+      threadId: "thread-1",
+      text: "Continue the task.",
+      messages: history,
+      providerModel: { providerId: "fixture", modelId: "fixture-model" },
+      grant,
+      capabilities: testCapabilitySession([descriptor("read-a")]),
+      signal: new AbortController().signal,
+    });
+    await handle.done;
+
+    expect(requests).toHaveLength(2);
+    expect(requests[0]?.tools).toHaveLength(0);
+    expect(requests[1]?.messages.some((message) => typeof message.content === "string" && message.content.includes("[Earlier conversation summary"))).toBe(true);
+    expect(requests[1]!.messages.length).toBeLessThan(history.length + 1);
+    expect(store.compactions).toHaveLength(1);
+    expect(store.compactions[0]).toMatchObject({ trigger: "auto" });
+    expect(store.getRun(handle.runId)).toMatchObject({ status: "completed" });
+  });
+
+  it("keeps the original history when the summary call fails", async () => {
+    const requests: ModelGenerateRequest[] = [];
+    const history: ModelMessage[] = [
+      { role: "system", content: "system prompt" },
+      ...Array.from({ length: 12 }, (_, index) => ({
+        role: index % 2 ? "assistant" as const : "user" as const,
+        content: `message ${index} ${"x".repeat(10_000)}`,
+      })),
+    ];
+    const modelAdapter: TestModelAdapter = {
+      ...testModelAdapter([], { ...supportedCapabilities, contextWindow: { status: "known", value: 32_000 } }),
+      requests,
+      async *generate(request) {
+        requests.push({ ...request, messages: [...request.messages] });
+        const compacting = typeof request.messages[0]?.content === "string"
+          && request.messages[0].content.includes("You are compacting an agent conversation");
+        if (compacting) throw new Error("summary unavailable");
+        yield { type: "content.delta", kind: "assistant_text", delta: "Done." };
+        yield { type: "completed", finishReason: "stop" };
+      },
+    };
+    const store = testRunStore();
+    const engine = createAgentEngine({ adapters: registryFor(modelAdapter), store });
+
+    const handle = await engine.run({
+      botId: "bot-1",
+      threadId: "thread-1",
+      text: "Continue the task.",
+      messages: history,
+      providerModel: { providerId: "fixture", modelId: "fixture-model" },
+      grant,
+      capabilities: testCapabilitySession([descriptor("read-a")]),
+      signal: new AbortController().signal,
+    });
+    await handle.done;
+
+    expect(store.compactions).toHaveLength(0);
+    expect(store.getRun(handle.runId)).toMatchObject({ status: "completed" });
   });
 
   it("steers a running turn before the next round and refuses after it finishes", async () => {

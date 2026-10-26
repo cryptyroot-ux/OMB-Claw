@@ -723,6 +723,9 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               case "run.recovery_required":
                 finish(false, "recovery_required", "The operation may have taken effect. Inspect its state before continuing.");
                 break;
+              case "run.compacted":
+                emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message: `Older context was summarized to fit the model window (${event.tokenEstimate} estimated tokens after compaction).` });
+                break;
               case "run.started":
                 break;
             }

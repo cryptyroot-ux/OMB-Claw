@@ -187,6 +187,18 @@ export interface AgentRunStore {
   beginCapabilityCall(record: AgentCapabilityCallRecord): void;
   settleCapabilityCall(runId: RunId, callId: CapabilityCallId, status: CapabilityCallStatus, settledAt: number): void;
   recoverUnsettledRuns(now: number): void;
+  /** Optional so existing stores and tests do not need to persist compaction history. */
+  recordCompaction?(record: AgentCompactionRecord): void;
+}
+
+export interface AgentCompactionRecord {
+  readonly runId: RunId;
+  readonly sequence: number;
+  readonly summary: string;
+  readonly firstKeptIndex: number;
+  readonly tokenEstimate: number;
+  readonly trigger: "auto" | "overflow";
+  readonly createdAt: number;
 }
 
 export type AgentEvent =
@@ -198,6 +210,7 @@ export type AgentEvent =
   | { readonly type: "turn.completed"; readonly runId: RunId; readonly ok: boolean; readonly stopReason: string | null }
   | { readonly type: "run.failed"; readonly runId: RunId; readonly message: string }
   | { readonly type: "run.interrupted"; readonly runId: RunId }
+  | { readonly type: "run.compacted"; readonly runId: RunId; readonly summary: string; readonly firstKeptIndex: number; readonly tokenEstimate: number; readonly trigger: "auto" | "overflow" }
   | { readonly type: "run.recovery_required"; readonly runId: RunId; readonly callId: CapabilityCallId };
 
 export interface AgentRunRequest {

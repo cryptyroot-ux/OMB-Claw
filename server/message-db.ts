@@ -15,6 +15,7 @@ import type {
   AgentCapabilityCallRecord,
   AgentRunRecord,
   AgentRunStatus,
+  AgentCompactionRecord,
   CapabilityCallStatus,
 } from "./agent-runtime/contracts.ts";
 export type { SearchHit } from "./message-search-query.ts";
@@ -110,6 +111,16 @@ function open(): DatabaseSync {
       failure_code TEXT
     );
     CREATE INDEX IF NOT EXISTS agent_runs_thread ON agent_runs(thread_id, updated_at);
+    CREATE TABLE IF NOT EXISTS agent_compactions (
+      run_id TEXT NOT NULL,
+      sequence INTEGER NOT NULL,
+      summary TEXT NOT NULL,
+      first_kept_index INTEGER NOT NULL,
+      token_estimate INTEGER NOT NULL,
+      trigger TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (run_id, sequence)
+    );
     CREATE TABLE IF NOT EXISTS agent_capability_calls (
       run_id TEXT NOT NULL,
       call_id TEXT NOT NULL,
@@ -600,6 +611,37 @@ export function insertAgentRun(record: AgentRunRecord): void {
 export function readAgentRun(runId: string): AgentRunRecord | undefined {
   const row = db().prepare("SELECT * FROM agent_runs WHERE run_id = ?").get(runId) as AgentRunRow | undefined;
   return row ? toAgentRunRecord(row) : undefined;
+}
+
+export function insertAgentCompaction(record: AgentCompactionRecord): void {
+  db()
+    .prepare(
+      "INSERT INTO agent_compactions(run_id, sequence, summary, first_kept_index, token_estimate, trigger, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .run(record.runId, record.sequence, record.summary, record.firstKeptIndex, record.tokenEstimate, record.trigger, record.createdAt);
+}
+
+export function readAgentCompactions(runId: string): AgentCompactionRecord[] {
+  const rows = db()
+    .prepare("SELECT run_id, sequence, summary, first_kept_index, token_estimate, trigger, created_at FROM agent_compactions WHERE run_id = ? ORDER BY sequence")
+    .all(runId) as Array<{
+      run_id: string;
+      sequence: number;
+      summary: string;
+      first_kept_index: number;
+      token_estimate: number;
+      trigger: "auto" | "overflow";
+      created_at: number;
+    }>;
+  return rows.map((row) => ({
+    runId: row.run_id,
+    sequence: row.sequence,
+    summary: row.summary,
+    firstKeptIndex: row.first_kept_index,
+    tokenEstimate: row.token_estimate,
+    trigger: row.trigger,
+    createdAt: row.created_at,
+  }));
 }
 
 export function updateAgentRunProgress(

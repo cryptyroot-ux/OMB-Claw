@@ -1,5 +1,6 @@
 import {
   insertAgentCapabilityCall,
+  insertAgentCompaction,
   insertAgentRun,
   readAgentRun,
   recoverUnsettledAgentRuns,
@@ -38,6 +39,9 @@ export function createSqliteAgentRunStore(options: { recoverAt?: number } = {}):
     },
     recoverUnsettledRuns(now: number): void {
       recoverUnsettledAgentRuns(now);
+    },
+    recordCompaction(record): void {
+      insertAgentCompaction(record);
     },
   };
 }

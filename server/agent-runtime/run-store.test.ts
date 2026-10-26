@@ -9,7 +9,7 @@ const dataDir = mkdtempSync(join(tmpdir(), "omb-agent-runs-"));
 process.env.OMB_DATA_DIR = dataDir;
 
 const { createSqliteAgentRunStore } = await import("./run-store.ts");
-const { closeMessageDb, readAgentCapabilityCall } = await import("../message-db.ts");
+const { closeMessageDb, readAgentCapabilityCall, readAgentCompactions } = await import("../message-db.ts");
 
 const run = (runId: string, status: AgentRunRecord["status"] = "running"): AgentRunRecord => ({
   runId,
@@ -84,5 +84,23 @@ describe("createSqliteAgentRunStore", () => {
     const reopened = createSqliteAgentRunStore();
 
     expect(reopened.getRun("run-3")).toMatchObject({ status: "interrupted", failureCode: "process_restarted" });
+  });
+
+  it("persists compaction records in sequence", () => {
+    const store = createSqliteAgentRunStore();
+    store.createRun(run("run-4"));
+    store.recordCompaction?.({
+      runId: "run-4", sequence: 1, summary: "first summary", firstKeptIndex: 3,
+      tokenEstimate: 12_000, trigger: "auto", createdAt: 2_000,
+    });
+    store.recordCompaction?.({
+      runId: "run-4", sequence: 2, summary: "second summary", firstKeptIndex: 5,
+      tokenEstimate: 9_000, trigger: "overflow", createdAt: 2_100,
+    });
+
+    expect(readAgentCompactions("run-4")).toMatchObject([
+      { sequence: 1, summary: "first summary", firstKeptIndex: 3, tokenEstimate: 12_000, trigger: "auto" },
+      { sequence: 2, summary: "second summary", firstKeptIndex: 5, tokenEstimate: 9_000, trigger: "overflow" },
+    ]);
   });
 });
