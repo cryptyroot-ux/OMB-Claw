@@ -1,3 +1,43 @@
+> **OMB Native Runtime build** — this repository is a private fork of
+> OpenMausBot that runs the OMB-owned native agent engine. External CLI/ACP
+> engines (Claude, Codex, OpenCode, Hermes, Pi, Antigravity, …) are not
+> registered; only API model providers are available. There are no prebuilt
+> binaries yet — build from source.
+
+## Install from source
+
+1. Prerequisites: Node `>=24`, pnpm `10.33.0`.
+   ```sh
+   node --version
+   pnpm --version   # if missing: corepack enable && corepack prepare pnpm@10.33.0 --activate
+   ```
+2. Clone:
+   ```sh
+   git clone https://github.com/cryptyroot-ux/OMB-native-runtime.git
+   cd OMB-native-runtime
+   ```
+3. Install and build:
+   ```sh
+   pnpm install
+   pnpm build
+   ```
+4. Run:
+   ```sh
+   pnpm omb          # server mode
+   # or
+   pnpm dev:desktop  # Electron desktop
+   ```
+5. Configure an API provider (Settings → API keys, or env `OMB_OPENAI_LIVE_*`
+   for the loopback fixture), then create a bot on it.
+
+Verification:
+```sh
+pnpm typecheck && pnpm lint
+pnpm exec vitest run server/native-only.e2e.test.ts server/openai-tools.e2e.test.ts server/native-ui.e2e.test.ts
+```
+
+---
+
 <div align="center">
 
 # OpenMausBot
