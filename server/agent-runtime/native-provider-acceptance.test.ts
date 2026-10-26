@@ -153,6 +153,7 @@ describe("native ProviderAdapter acceptance", () => {
     await runtime.adapter.sendTurn({
       threadId: "thread-1",
       text: "Run both fixture capabilities.",
+      agentEngine: "omb-native",
       model: "fixture-model",
       approvalMode: "full",
     });
@@ -222,6 +223,7 @@ describe("native ProviderAdapter acceptance", () => {
       await runtime.adapter.sendTurn({
         threadId: "thread-steer",
         text: "Take your time.",
+        agentEngine: "omb-native",
         model: "fixture-model",
         approvalMode: "full",
       });
@@ -288,6 +290,7 @@ describe("native ProviderAdapter acceptance", () => {
     await runtime.adapter.sendTurn({
       threadId: "thread-images",
       text: "Look at this.",
+      agentEngine: "omb-native",
       model: "fixture-model",
       approvalMode: "full",
       images: [{ path: "/nonexistent.png", mime: "image/png", bytes: 0 }],

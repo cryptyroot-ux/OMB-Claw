@@ -288,6 +288,8 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     approval: ReturnType<typeof createChatToolApproval>;
     /** Mid-turn input parked by adapter.steer, spliced in at the next round, never mid-tool-batch. */
     asides: string[];
+    /** This turn runs the OMB Agent Runtime; steering is not supported yet. */
+    native?: boolean;
   }>();
   const reasoningReplayRejected = new Set<string>();
   const delivered = new Map<string, DeliveredUserMessage[]>();
@@ -588,13 +590,14 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     });
     let resolveDone!: () => void;
     const done = new Promise<void>((resolve) => { resolveDone = resolve; });
-    const turnEntry = { abort, turnId, done, approval, asides: [] as string[] };
+    const turnEntry = { abort, turnId, done, approval, asides: [] as string[], native: false };
     active.set(turn.threadId, turnEntry);
     emit({ ...base(turn.threadId, turnId), type: "turn.started" });
     emit({ ...base(turn.threadId, turnId), type: "session.started", sessionId: null, model });
 
-    if (options.nativeAgentEngine) {
+    if (options.nativeAgentEngine && turn.agentEngine === "omb-native") {
       const nativeEngine = options.nativeAgentEngine;
+      turnEntry.native = true;
       void (async () => {
         let tools: ChatToolSession | undefined;
         let capabilitySession: ReturnType<typeof createChatCapabilitySession> | undefined;
@@ -1082,7 +1085,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       steer: async (threadId, text) => {
         const running = active.get(threadId);
         if (!running) return "refused";
-        if (options.nativeAgentEngine) return "refused";
+        if (running.native) return "refused";
         running.asides.push(text);
         return "steered";
       },

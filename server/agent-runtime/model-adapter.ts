@@ -15,7 +15,7 @@ export interface OpenAICompatibleModelAdapterConfig {
   providerId: string;
   apiUrl: string;
   apiKey: string;
-  catalog: ModelCatalog;
+  catalog: ModelCatalog | (() => ModelCatalog);
   capabilities: (modelId: string) => ModelCapabilities;
   fetcher?: typeof fetch;
   timeoutMs?: number;
@@ -198,7 +198,7 @@ export function createOpenAICompatibleModelAdapter(config: OpenAICompatibleModel
     providerId: config.providerId,
 
     async discoverModels(): Promise<ModelCatalog> {
-      return config.catalog;
+      return typeof config.catalog === "function" ? config.catalog() : config.catalog;
     },
 
     capabilities(modelId: string): ModelCapabilities {

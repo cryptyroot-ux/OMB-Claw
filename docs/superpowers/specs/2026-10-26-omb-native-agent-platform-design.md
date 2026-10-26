@@ -18,7 +18,7 @@ The engine, provider/model transport, and capability execution are separate OMB-
 - **Capability Runtime:** OMB owns discovery/loading, assignment, grants, authorization, execution, timeouts, result/error normalization, and audit behavior for executable capabilities.
 - **Skills stay distinct:** a Skill is an assigned/versioned instruction asset. It does not grant or execute capabilities.
 - **CLI-free proof:** OMB completes a multi-step API-model task with no external agent CLI available or launched.
-- **Gradual migration:** preserve current bots, CLI/ACP engines, providers, approvals, MCP configuration, transcripts, and routines until tested gates prove compatibility.
+- **Native-only build:** external CLI/ACP agent engines are not supported or launched in this build; API model providers remain.
 
 ## Current source constraints
 
@@ -83,17 +83,17 @@ Retry a model request only when OMB can prove it is safe: before visible output 
 
 For a model-returned batch, parse and validate every call ID, argument schema, and aggregate budget before the first side effect. Then authorize/approve calls individually in provider order, preserving current per-call approval semantics: a denied call never executes, while a separate authorized call may execute. If any call fails or is denied, report partial completion explicitly and do not retry the batch or replay calls that already ran.
 
-### 5. Legacy compatibility and rollout
+### 5. This build: native-only, no external engines
 
-Keep existing driver registration, ACP/CLI engine paths, saved bot models, approval behavior, and provider sessions during the migration. Map existing API-driver model selections to the new provider/model reference behind an opt-in native-engine gate. Existing external agent drivers remain compatibility engines and do not count as CLI-free proof.
+This OMB build does **not** support external agent engines. Claude Code, Codex, OpenCode, Hermes, Pi, Antigravity, custom ACP, and the other CLI/ACP-backed engines remain in the source tree but are removed from the provider registry. They are never selectable, authenticated, or launched by this build. Existing bot records that still point at one become unavailable with their stored configuration preserved; OMB does not silently rewrite a bot to another engine.
 
-Do not change defaults for existing bots or remove old paths until migration tests, rollback, and a canary pass. New-bot default policy is also unchanged in this design; any later default change requires a separate explicit decision.
+API model providers remain supported. The OpenAI-compatible API driver routes every turn through the OMB Agent Runtime. Other API drivers keep their existing OMB-owned direct API loop until they are migrated; that loop is not an external engine. The old Chat Completions loop remains only as an internal compatibility path for non-migrated API drivers and focused regression tests, not as a user-selectable external engine.
 
-For the first end-to-end milestone, exercise the new runtime through the existing direct-API `ProviderAdapter.sendTurn` boundary in an isolated fixture with an injected AgentEngine. This proves the OMB-owned model/tool loop without changing production routing, bot settings, defaults, or UI. Other direct API drivers and all ACP/CLI paths remain unchanged until a later rollout phase; no live canary is included.
+No new bot defaults, data migration, UI engine selector, live canary, push, or deployment is included in this milestone. The transport adapter still exposes only text input; image input is rejected and image-returning tools fail closed until multimodal transport is added.
 
 ## Migration phases and gates
 
-1. **Baseline and contract tests:** pin direct API loop, tool/approval behavior, retry boundaries, cancellation, transcript/context, MCP, Skills assignment, and CLI/ACP compatibility. Record failures by exact suite and environment; do not treat today's interrupted repo-wide run as green.
+1. **Baseline and contract tests:** pin direct API loop, tool/approval behavior, retry boundaries, cancellation, transcript/context, MCP, and Skills assignment. Record failures by exact suite and environment; do not treat today's interrupted repo-wide run as green.
 2. **Ports and deterministic fixture:** finalize `AgentEngine`, model capabilities/events, capability descriptors/results, and run-store contracts. Add a local HTTP provider fixture and fake capabilities before moving the production loop.
 3. **In-process extraction:** route the existing direct API loop through the OMB Agent Runtime with behavior parity. Keep the old dispatch path available behind an opt-in gate and add rollback.
 4. **Durable state and recovery:** add SQLite run/call journal and crash/cancellation/retry handling. Prove uncertain writes are not replayed.
@@ -112,7 +112,7 @@ Current local evidence is limited: the prototype's focused tests pass 9/9 and `p
 
 ## Non-goals and anti-goals
 
-- Do not replace all provider and CLI drivers at once.
+- Do not register, authenticate, or launch an external agent CLI/ACP engine in this build.
 - Do not require an agent CLI for an API-model bot to run natively.
 - Do not assume provider/model capabilities from names, endpoint compatibility, or catalog presence.
 - Do not expose model-visible tools that the bot cannot invoke under current grants and approval policy.

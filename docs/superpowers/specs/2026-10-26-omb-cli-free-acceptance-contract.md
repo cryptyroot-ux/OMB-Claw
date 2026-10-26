@@ -9,7 +9,7 @@
 ### A. Required deterministic CI proof
 
 - Run OMB in an isolated verification fixture with its own temporary `DATA_DIR`, home, ports, and test bot.
-- Invoke the native runtime through the existing direct-API `ProviderAdapter.sendTurn` boundary used by `server/index.ts`, with an AgentEngine injected only by the isolated fixture. The first milestone does not change production dispatch, add an engine-selection UI, or change bot configuration/defaults. Other providers remain on their current path.
+- Invoke the native runtime through the existing direct-API `ProviderAdapter.sendTurn` boundary used by `server/index.ts`. OpenAI-compatible turns carry `agentEngine:"omb-native"`; external CLI/ACP engines are not registered or launched. The fixture may replace the capability session only inside its own injected engine.
 - Use a local HTTP model API that records requests and returns scripted responses. No live provider, external network, user data, or provider credential is used.
 - Use safe fixture-native capabilities and a local MCP fixture. Any file write is confined to the fixture's temporary directory.
 - Restrict `PATH` to the test runtime and test shims. Record process launches and fail if an external agent CLI is invoked. The fixture may use only the explicitly declared local service processes needed by the test.
@@ -50,11 +50,11 @@ Each model profile must have evidence for tool calls, streaming, context limits,
 
 ## Compatibility and rollout gates
 
-- Existing bots remain on their current engine/model mapping until explicitly migrated or opted into the native engine.
-- New native runs remain opt-in behind a feature gate through the first canary.
+- External agent CLIs/ACP engines are not registered, selectable, authenticated, or launched in this build.
+- A stored bot that names an external engine becomes unavailable; its configuration is preserved and OMB does not silently rewrite it.
+- OpenAI-compatible API bots use the OMB native engine by default. Other API drivers remain on their existing OMB-owned direct API loop until migrated.
 - The existing thread/task ownership, context reconstruction, approval, tool-scope, room, browser/computer, MCP, Skills, and cancellation tests remain part of the compatibility matrix.
-- No old CLI/ACP path is removed until its migration and rollback tests pass.
-- Rollback disables the native path for new runs without deleting run history or rewriting legacy bot settings.
+- Rollback disables the native path for OpenAI-compatible runs and returns to the legacy API loop without deleting run history or rewriting bot settings. Rollback does not re-enable external engines.
 
 ## Evidence bundle for a pass
 

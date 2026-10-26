@@ -114,6 +114,8 @@ export interface SendTurnInput {
   /** Images for this user turn only; kept out of replay transcripts. */
   images?: TurnImageInput[];
   model?: string;
+  /** Explicit opt-in to the OMB-owned API agent loop; absent means the legacy driver loop. */
+  agentEngine?: "omb-native";
   effort?: EffortLevel;
   variant?: string;
   resumeCursor?: unknown;

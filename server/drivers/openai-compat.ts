@@ -2,6 +2,9 @@
 // other endpoints that speak the OpenAI chat-completions contract.
 import type { ModelCatalog, ProviderDriver } from "../contracts.ts";
 import { createOpenAIChatRuntime } from "./openai-chat.ts";
+import { createAgentEngine } from "../agent-runtime/runtime.ts";
+import { createOpenAICompatibleModelAdapter } from "../agent-runtime/model-adapter.ts";
+import { createSqliteAgentRunStore } from "../agent-runtime/run-store.ts";
 import {
   freeDefault, freeFallbackCatalog, freeLabel, freeToolModels, freeToolsFirst, isOpenRouterOrigin, openRouterFreeTier,
   withOpenRouterTurns, type OpenRouterModelRow,
@@ -180,6 +183,33 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
       fetchModels(),
     ]) : null;
 
+    const nativeAdapter = createOpenAICompatibleModelAdapter({
+      providerId: DRIVER_KIND,
+      apiUrl: config.url,
+      apiKey,
+      catalog: () => catalog,
+      reasoning: true,
+      capabilities: (modelId) => {
+        const contextWindow = catalog.options.find((option) => option.id === modelId)?.contextWindow;
+        return {
+          tools: config.tools === false ? "unsupported" : "supported",
+          parallelTools: "unknown",
+          streaming: "supported",
+          contextWindow: contextWindow ? { status: "known", value: contextWindow } : { status: "known", value: 128_000 },
+          imageInput: "unsupported",
+          imageOutput: "unsupported",
+          audioInput: "unsupported",
+          audioOutput: "unsupported",
+          structuredOutput: "unsupported",
+          toolSchemaLimit: { status: "unknown" },
+        };
+      },
+    });
+    const nativeAgentEngine = createAgentEngine({
+      adapters: { resolve: () => nativeAdapter },
+      store: createSqliteAgentRunStore(),
+    });
+
     const runtime = createOpenAIChatRuntime({
       input,
       driverKind: DRIVER_KIND,
@@ -188,6 +218,7 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
       tools: config.tools,
       computerUse: true,
       nudgeAnnouncedAction: true,
+      nativeAgentEngine,
       models: () => catalog,
       refreshModels: fetchModels,
       requestBody: (model, messages, stream) => ({
