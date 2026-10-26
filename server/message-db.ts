@@ -11,6 +11,12 @@ import type { UsageTrigger } from "./usage-ledger.ts";
 import { MessageSearchWorker } from "./message-search-worker.ts";
 import { searchMessagesInDatabase, type SearchHit } from "./message-search-query.ts";
 import type { Notification, NotificationLogEntry } from "../shared/notification.ts";
+import type {
+  AgentCapabilityCallRecord,
+  AgentRunRecord,
+  AgentRunStatus,
+  CapabilityCallStatus,
+} from "./agent-runtime/contracts.ts";
 export type { SearchHit } from "./message-search-query.ts";
 
 const DB_FILE = () => join(DATA_DIR, "messages.db");
@@ -89,6 +95,32 @@ function open(): DatabaseSync {
       read INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS notification_log_at ON notification_log(at);
+    CREATE TABLE IF NOT EXISTS agent_runs (
+      run_id TEXT PRIMARY KEY,
+      bot_id TEXT NOT NULL,
+      thread_id TEXT NOT NULL,
+      engine_id TEXT NOT NULL,
+      provider_id TEXT NOT NULL,
+      model_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      started_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      model_rounds INTEGER NOT NULL DEFAULT 0,
+      tool_calls INTEGER NOT NULL DEFAULT 0,
+      failure_code TEXT
+    );
+    CREATE INDEX IF NOT EXISTS agent_runs_thread ON agent_runs(thread_id, updated_at);
+    CREATE TABLE IF NOT EXISTS agent_capability_calls (
+      run_id TEXT NOT NULL,
+      call_id TEXT NOT NULL,
+      capability_id TEXT NOT NULL,
+      risk TEXT NOT NULL,
+      status TEXT NOT NULL,
+      started_at INTEGER NOT NULL,
+      settled_at INTEGER,
+      PRIMARY KEY (run_id, call_id)
+    );
+    CREATE INDEX IF NOT EXISTS agent_capability_calls_status ON agent_capability_calls(status);
   `);
   ensureRecallIndex(db);
   ensureMemoryIndex(db);
@@ -488,6 +520,169 @@ export function updateMessage(threadId: string, message: Message): void {
   db()
     .prepare("UPDATE messages SET at = ?, role = ?, kind = ?, text = ?, json = ? WHERE thread_id = ? AND id = ?")
     .run(message.at, message.role, message.kind, message.text ?? null, JSON.stringify(message), threadId, message.id);
+}
+
+interface AgentRunRow {
+  run_id: string;
+  bot_id: string;
+  thread_id: string;
+  engine_id: string;
+  provider_id: string;
+  model_id: string;
+  status: string;
+  started_at: number;
+  updated_at: number;
+  model_rounds: number;
+  tool_calls: number;
+  failure_code: string | null;
+}
+
+interface AgentCapabilityCallRow {
+  run_id: string;
+  call_id: string;
+  capability_id: string;
+  risk: string;
+  status: string;
+  started_at: number;
+  settled_at: number | null;
+}
+
+function toAgentRunRecord(row: AgentRunRow): AgentRunRecord {
+  return {
+    runId: row.run_id,
+    botId: row.bot_id,
+    threadId: row.thread_id,
+    engineId: row.engine_id,
+    providerModel: { providerId: row.provider_id, modelId: row.model_id },
+    status: row.status as AgentRunStatus,
+    startedAt: row.started_at,
+    updatedAt: row.updated_at,
+    modelRounds: row.model_rounds,
+    toolCalls: row.tool_calls,
+    ...(row.failure_code === null ? {} : { failureCode: row.failure_code }),
+  };
+}
+
+function toAgentCapabilityCallRecord(row: AgentCapabilityCallRow): AgentCapabilityCallRecord {
+  return {
+    runId: row.run_id,
+    callId: row.call_id,
+    capabilityId: row.capability_id,
+    risk: row.risk as AgentCapabilityCallRecord["risk"],
+    status: row.status as CapabilityCallStatus,
+    startedAt: row.started_at,
+    ...(row.settled_at === null ? {} : { settledAt: row.settled_at }),
+  };
+}
+
+export function insertAgentRun(record: AgentRunRecord): void {
+  db()
+    .prepare(
+      "INSERT INTO agent_runs(run_id, bot_id, thread_id, engine_id, provider_id, model_id, status, started_at, updated_at, model_rounds, tool_calls, failure_code) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .run(
+      record.runId,
+      record.botId,
+      record.threadId,
+      record.engineId,
+      record.providerModel.providerId,
+      record.providerModel.modelId,
+      record.status,
+      record.startedAt,
+      record.updatedAt,
+      record.modelRounds,
+      record.toolCalls,
+      record.failureCode ?? null,
+    );
+}
+
+export function readAgentRun(runId: string): AgentRunRecord | undefined {
+  const row = db().prepare("SELECT * FROM agent_runs WHERE run_id = ?").get(runId) as AgentRunRow | undefined;
+  return row ? toAgentRunRecord(row) : undefined;
+}
+
+export function updateAgentRunProgress(
+  runId: string,
+  progress: { readonly modelRounds: number; readonly toolCalls: number; readonly updatedAt: number },
+): void {
+  db()
+    .prepare("UPDATE agent_runs SET model_rounds = ?, tool_calls = ?, updated_at = ? WHERE run_id = ?")
+    .run(progress.modelRounds, progress.toolCalls, progress.updatedAt, runId);
+}
+
+export function transitionAgentRun(
+  runId: string,
+  expected: AgentRunStatus,
+  next: AgentRunStatus,
+  updatedAt: number,
+  failureCode?: string,
+): boolean {
+  const result = db()
+    .prepare("UPDATE agent_runs SET status = ?, updated_at = ?, failure_code = ? WHERE run_id = ? AND status = ?")
+    .run(next, updatedAt, failureCode ?? null, runId, expected);
+  return Number(result.changes) > 0;
+}
+
+export function insertAgentCapabilityCall(record: AgentCapabilityCallRecord): void {
+  db()
+    .prepare(
+      "INSERT INTO agent_capability_calls(run_id, call_id, capability_id, risk, status, started_at, settled_at) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .run(
+      record.runId,
+      record.callId,
+      record.capabilityId,
+      record.risk,
+      record.status,
+      record.startedAt,
+      record.settledAt ?? null,
+    );
+}
+
+export function updateAgentCapabilityCall(
+  runId: string,
+  callId: string,
+  status: CapabilityCallStatus,
+  settledAt: number,
+): void {
+  db()
+    .prepare("UPDATE agent_capability_calls SET status = ?, settled_at = ? WHERE run_id = ? AND call_id = ?")
+    .run(status, settledAt, runId, callId);
+}
+
+export function readAgentCapabilityCall(runId: string, callId: string): AgentCapabilityCallRecord | undefined {
+  const row = db()
+    .prepare("SELECT * FROM agent_capability_calls WHERE run_id = ? AND call_id = ?")
+    .get(runId, callId) as AgentCapabilityCallRow | undefined;
+  return row ? toAgentCapabilityCallRecord(row) : undefined;
+}
+
+/**
+ * A restart cannot know whether an in-flight side effect happened. Keep the
+ * call and run fail-closed; runs with no in-flight call can be interrupted
+ * without implying an uncertain write.
+ */
+export function recoverUnsettledAgentRuns(now: number): void {
+  transaction((database) => {
+    database
+      .prepare("UPDATE agent_capability_calls SET status = 'recovery_required', settled_at = ? WHERE status = 'dispatching'")
+      .run(now);
+    database
+      .prepare(
+        "UPDATE agent_runs SET status = 'recovery_required', updated_at = ?, failure_code = COALESCE(failure_code, 'uncertain_side_effect') " +
+        "WHERE status IN ('queued', 'running', 'waiting') AND run_id IN (" +
+        "SELECT run_id FROM agent_capability_calls WHERE status = 'recovery_required')",
+      )
+      .run(now);
+    database
+      .prepare(
+        "UPDATE agent_runs SET status = 'interrupted', updated_at = ?, failure_code = COALESCE(failure_code, 'process_restarted') " +
+        "WHERE status IN ('queued', 'running', 'waiting')",
+      )
+      .run(now);
+  });
 }
 
 export function workingGoalRunMessages(): Array<{ threadId: string; message: Message }> {

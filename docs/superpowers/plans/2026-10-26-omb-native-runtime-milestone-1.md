@@ -98,25 +98,25 @@ Commit with `feat: add protocol-neutral Agent Engine loop`.
 - Consumes: Task 1 `AgentRunStore`, `AgentRunRecord`, `AgentCapabilityCallRecord`, and status types.
 - Produces: SQLite-backed implementations with the exact Task 1 method signatures; status transitions compare the expected prior state and fail on a stale transition.
 
-- [ ] **Step 1: Write failing persistence and recovery tests**
+- [x] **Step 1: Write failing persistence and recovery tests**
 
-Add tests named `persists_run_transitions_across_database_reopen` and `marks_in_flight_capability_uncertain_without_replaying`. Use a fresh temporary `DATA_DIR`; simulate process restart by closing/reopening the SQLite store.
+Add tests named `persists_run_transitions_and_progress_across_a_database_reopen`, `marks_in_flight_capability_calls_recovery_required_without_replaying_them`, and `marks_an_orphaned_model_run_interrupted_when_no_capability_was_in_flight`. Use a fresh temporary `DATA_DIR`; simulate process restart by closing/reopening the SQLite store.
 
-- [ ] **Step 2: Run the focused tests and confirm RED**
+- [x] **Step 2: Run the focused tests and confirm RED**
 
 Run: `pnpm vitest run server/agent-runtime/run-store.test.ts`
 Expected: missing table/store behavior fails; the test must show the journal does not yet persist the run/call state.
 
-- [ ] **Step 3: Add the SQLite run journal**
+- [x] **Step 3: Add the SQLite run journal**
 
 Add `agent_runs` and `agent_capability_calls` tables to `message-db.ts`. Persist run transitions transactionally. Before invoking a capability, durably commit its `dispatching` record using the message DB's durable-write pattern; store only call identity/risk/status and a bounded redacted result summary, not raw prompts or credentials. On startup, convert orphaned model runs to `interrupted` and dispatching capability calls to `recovery_required`.
 
-- [ ] **Step 4: Run persistence tests**
+- [x] **Step 4: Run persistence tests**
 
 Run: `pnpm vitest run server/agent-runtime/run-store.test.ts server/message-db.test.ts`
-Expected: all selected tests pass; a reopened DB reports the uncertain call and never marks it safe to replay.
+Expected: all selected tests pass; a reopened DB reports the uncertain call and never marks it safe to replay. Run `server/message-db.test.ts` only with a disposable `OMB_DATA_DIR` because that suite deletes its data directory.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit with `feat: persist native agent run and call state`.
 
