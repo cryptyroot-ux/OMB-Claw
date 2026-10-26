@@ -10620,7 +10620,7 @@ async function runClaimedGroupMemberTurn(
       config: [roomSystem.stable, cwd, readyBot.modelSelection, turnApprovalMode, roomToolScope, roomUserMcp, integrations],
       window: roomWindow, tail: roomTail, wrap: (body) => withTurnClock(clock, withRecalled(roomRecalled, body + roomShareNote.text)),
     });
-    guardTurnDispatch(roomShareNote.after(instance.adapter.sendTurn({
+    guardTurnDispatch(roomShareNote.after((instance.nativeTurnRuntime?.sendTurn ?? instance.adapter.sendTurn)({
         ...roomSession.send,
         threadId,
         botId: readyBot.id,

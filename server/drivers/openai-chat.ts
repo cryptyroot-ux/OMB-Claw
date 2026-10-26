@@ -29,6 +29,7 @@ import { KEY_REJECTED_REASON, keyRejected, noteKeyAccepted, noteKeyRejected, rej
 import { rejectsToolsParameter } from "../tool-rejection.ts";
 import type { AgentEngine } from "../agent-runtime/contracts.ts";
 import { runNativeTurn, type NativeSteerState } from "../agent-runtime/turn-runtime.ts";
+import { createNativeTurnRuntime } from "../agent-runtime/native-turn-runtime.ts";
 import { announcesAction, MAX_ANNOUNCEMENT_NUDGES, NUDGE_ANNOUNCED_ACTION } from "../agent-runtime/announcement.ts";
 
 export interface OpenAIChatMessage {
@@ -970,6 +971,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         return () => listeners.delete(listener);
       },
     },
+    nativeTurnRuntime: createNativeTurnRuntime(sendTurn),
     generateText: async (prompt, { signal, onUsage, model: named } = {}) => {
       const model = named ?? options.generateModel?.() ?? options.models().default;
       const { text, reasoning, toolCalls } = await complete([{ role: "user", content: prompt }], model, false, signal, undefined, [], onUsage);

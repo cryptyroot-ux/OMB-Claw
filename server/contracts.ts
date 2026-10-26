@@ -458,6 +458,8 @@ export interface ProviderInstance {
   /** Remove the provider CLI's stored sign-in on this server; never touches another instance's home. */
   readonly signOut?: () => Promise<void>;
   readonly adapter: ProviderAdapter;
+  /** OMB-owned turn entry point for API drivers. Present on native API drivers; absent on external/legacy drivers. */
+  readonly nativeTurnRuntime?: import("./agent-runtime/native-turn-runtime.ts").NativeTurnRuntime;
   snapshot(): Promise<ProviderSnapshot>;
   /** Cheap one-shot text call (titles, summaries); the signal is a best-effort cap. */
   generateText?(prompt: string, options?: TextGenerationOptions): Promise<string>;

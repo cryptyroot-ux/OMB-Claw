@@ -23,7 +23,7 @@ export interface QuickRoute {
   onFallback: () => void;
 }
 
-type Engine = { instanceId: string; adapter: Pick<ProviderAdapter, "sendTurn" | "interruptTurn"> };
+type Engine = { instanceId: string; adapter: Pick<ProviderAdapter, "sendTurn" | "interruptTurn">; nativeTurnRuntime?: { sendTurn: (input: SendTurnInput) => Promise<TurnStartResult> } };
 
 interface Armed {
   engine: Engine;
@@ -78,12 +78,16 @@ export class QuickModelFallback {
     return armed && armed.phase !== "retrying" ? armed.quick.model : undefined;
   }
 
+  private turnSender(engine: Engine): (input: SendTurnInput) => Promise<TurnStartResult> {
+    return engine.nativeTurnRuntime?.sendTurn ?? engine.adapter.sendTurn;
+  }
+
   sendTurn(engine: Engine, input: SendTurnInput, quick?: QuickRoute): Promise<TurnStartResult> {
     this.armed.delete(input.threadId);
-    if (!quick) return engine.adapter.sendTurn(input);
+    if (!quick) return this.turnSender(engine)(input);
     const armed: Armed = { engine, input, quick, phase: "quick", held: [] };
     this.armed.set(input.threadId, armed);
-    return engine.adapter.sendTurn(input).then((sent) => {
+    return this.turnSender(engine)(input).then((sent) => {
       armed.turnId ??= sent.turnId;
       return sent;
     }, (error: unknown) => {
@@ -151,7 +155,7 @@ export class QuickModelFallback {
     // After the adapter that emitted the refusal has finished settling the quick turn.
     setImmediate(() => {
       if (this.armed.get(threadId) !== armed) return;
-      armed.engine.adapter.sendTurn({ ...armed.input, model, effort, variant }).then((sent) => {
+      this.turnSender(armed.engine)({ ...armed.input, model, effort, variant }).then((sent) => {
         armed.retryTurnId ??= sent.turnId;
         if (this.deps.stopped(threadId)) void armed.engine.adapter.interruptTurn(threadId).catch(() => {});
       }, (error: unknown) => {
