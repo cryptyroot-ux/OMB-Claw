@@ -34,6 +34,9 @@ const EXPECTED: Record<string, EngineCapabilities> = {
   cerebras: chat,
   groq: chat,
   meta: chat,
+  anthropic: chat,
+  gemini: chat,
+  "openai-responses": chat,
 };
 
 describe("engineCapabilities", () => {
@@ -71,8 +74,8 @@ describe("engineCapabilities", () => {
     }
   });
 
-  it("keeps the chat family's step cap equal to MAX_CHAT_ROUNDS in openai-chat.ts", () => {
-    const source = readFileSync(new URL("../drivers/openai-chat.ts", import.meta.url), "utf8");
+  it("keeps the chat family's step cap equal to MAX_CHAT_ROUNDS in native-turn-runtime.ts", () => {
+    const source = readFileSync(new URL("../agent-runtime/native-turn-runtime.ts", import.meta.url), "utf8");
     const found = /^const MAX_CHAT_ROUNDS = (\d+);/m.exec(source);
     expect(found, "MAX_CHAT_ROUNDS moved or was renamed; update server/runtime/capabilities.ts").not.toBeNull();
     expect(engineCapabilities("openai-compat").stepCap).toBe(Number(found![1]));

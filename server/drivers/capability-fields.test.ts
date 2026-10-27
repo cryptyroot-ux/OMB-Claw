@@ -76,7 +76,7 @@ describe("typed capability fields for the cloud computer", () => {
     for (const driver of BUILT_IN_DRIVERS) {
       const instance = await keep(driver.create({
         instanceId: `caps-fleet-${driver.driverKind}`, displayName: "Caps Fleet", environment: {}, enabled: true,
-        config: driver.driverKind === "customAcp" ? { cli: "echo" } : {},
+        config: driver.driverKind === "customAcp" ? { cli: "echo" } : driver.defaultConfig?.() ?? {},
       }));
       expect(instance.adapter.capabilities, driver.driverKind).not.toHaveProperty("remoteAgent");
     }

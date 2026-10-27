@@ -41,6 +41,9 @@ const ENGINES: Readonly<Record<string, EngineRow>> = {
   cerebras: CHAT_ROW,
   groq: CHAT_ROW,
   meta: CHAT_ROW,
+  anthropic: CHAT_ROW,
+  gemini: CHAT_ROW,
+  "openai-responses": CHAT_ROW,
 };
 
 export function replaysTranscriptNatively(driverKind: string | undefined): boolean {
