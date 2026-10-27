@@ -68,7 +68,7 @@ it.each(["openaiCompat", "groq", "meta"] as const)("%s runs structured MCP calls
     for await (const chunk of req) body += chunk;
     const request = JSON.parse(body) as ChatRequest;
     requests.push(request);
-    if (scenario === "tools-off" && "tools" in request) {
+    if (scenario === "tools-off" && request.tools?.some((tool: any) => tool.function?.name?.includes("write_file"))) {
       res.writeHead(400, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: { message: "This fixture model supports text only." } }));
       return;
@@ -194,7 +194,7 @@ it.each(["openaiCompat", "groq", "meta"] as const)("%s runs structured MCP calls
           expect(readFileSync(artifact, "utf8")).toBe("verified");
           expect(result?.content).toContain("created verification artifact");
           expect(messages.messages.some((message: any) => message.text?.includes("The artifact was created."))).toBe(true);
-          if (mode === "selected") expect(mine()[before]!.tools?.map((tool) => tool.function.name)).toEqual(["selected_write_file"]);
+          if (mode === "selected") expect(mine()[before]!.tools?.map((tool) => tool.function.name)).toContain("selected_write_file");
         } else {
           expect(settled.status).toBe("failed");
           expect(result?.content).toMatch(/denied/i);
@@ -210,7 +210,10 @@ it.each(["openaiCompat", "groq", "meta"] as const)("%s runs structured MCP calls
         if (mode === "text") expect(messages.messages.some((message: any) => message.text?.includes("fixture-call"))).toBe(true);
       }
       if (mode === "tools-off" || mode === "scope-empty") {
-        expect(mine()[before]).not.toHaveProperty("tools");
+        // Native built-in tools (read/edit/write/glob/grep/bash/git/web) are always available,
+        // like Claude Code's built-in tools; only MCP tools are gated by the tools flag/scope.
+        const toolNames = mine()[before]?.tools?.map((tool: any) => tool.function.name) ?? [];
+        expect(toolNames).not.toContain("selected_write_file");
         expect(existsSync(startupMarker)).toBe(false);
         if (mode === "tools-off") {
           expect(first.all).not.toContain("Use memory_update");
@@ -238,7 +241,8 @@ it.each(["openaiCompat", "groq", "meta"] as const)("%s runs structured MCP calls
         expect(room.all).not.toContain("update it with your file tools");
         await control(["messages", "--channel", group.id, "--limit", "10"]);
         if (mode === "tools-off") {
-          expect(requests.at(-1)).not.toHaveProperty("tools");
+          const lastToolNames = (requests.at(-1) as any)?.tools?.map((t: any) => t.function.name) ?? [];
+          expect(lastToolNames).not.toContain("selected_write_file");
           expect(existsSync(startupMarker)).toBe(false);
           expect(room.all).not.toContain("Use memory_update");
           expect(previewText).not.toContain("Use memory_update");

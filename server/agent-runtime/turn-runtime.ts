@@ -31,7 +31,7 @@ export interface NativeTurnContext {
   engine: AgentEngine;
   driverKind: string;
   apiUrl: string;
-  toolsEnabled: boolean;
+  toolsEnabled: () => boolean;
   computerUse: boolean;
   nudgeAnnouncedAction: boolean;
   emit: (event: RuntimeEvent) => void;
@@ -101,7 +101,7 @@ export async function runNativeTurn(context: NativeTurnContext): Promise<void> {
     if (!parsed.ok) throw new Error(parsed.error);
     const scope = parsed.scope;
     tools = await mountChatTools(
-      context.toolsEnabled ? turn.integrations : undefined,
+      context.toolsEnabled() ? turn.integrations : undefined,
       abort.signal,
       context.computerUse,
       scope,
@@ -111,7 +111,7 @@ export async function runNativeTurn(context: NativeTurnContext): Promise<void> {
     for (const { server, reason } of tools.skipped) {
       context.emit({ ...context.base(turn.threadId, turnId), type: "runtime.notice", message: `MCP server "${server}" was skipped for this turn: ${context.safeText(reason)}` });
     }
-    const questionAllowed = context.toolsEnabled && allowsTool(scope, { kind: "native", name: ASK_USER_TOOL });
+    const questionAllowed = context.toolsEnabled() && allowsTool(scope, { kind: "native", name: ASK_USER_TOOL });
     if (questionAllowed && !tools.definitions.some((definition) => definition.function.name === ASK_USER_TOOL)) {
       tools.definitions.push(ASK_USER_TOOL_DEFINITION);
     }
@@ -124,16 +124,17 @@ export async function runNativeTurn(context: NativeTurnContext): Promise<void> {
     };
     const mcpSession = createChatCapabilitySession({ session: tools, approval });
     const fileRoot = turn.botId ? workspaceDir(turn.botId) : process.cwd();
+    console.log("TURNRUNTIME toolsEnabled=", context.toolsEnabled, "turn.toolScope=", JSON.stringify(turn.toolScope));
     const providers: any[] = [
       new SessionCapabilityProvider("mcp", "mcp", mcpSession, "MCP tools"),
     ];
-    if (context.toolsEnabled) {
-      providers.push(new NativeFileCapabilityProvider({ root: fileRoot }));
-      providers.push(new NativeShellCapabilityProvider({ root: fileRoot }));
-      providers.push(new NativeGitCapabilityProvider({ root: fileRoot }));
-      providers.push(new NativeWebCapabilityProvider({ root: fileRoot }));
-      providers.push(new ToolSearchCapabilityProvider(() => mcpSession));
-    }
+    // Native built-in tools (file, shell, git, web, tool_search) are always available,
+    // like Claude Code's built-in tools. They are not gated by the MCP tools flag.
+    providers.push(new NativeFileCapabilityProvider({ root: fileRoot }));
+    providers.push(new NativeShellCapabilityProvider({ root: fileRoot }));
+    providers.push(new NativeGitCapabilityProvider({ root: fileRoot }));
+    providers.push(new NativeWebCapabilityProvider({ root: fileRoot }));
+    providers.push(new ToolSearchCapabilityProvider(() => mcpSession));
     providers.push(new SkillCapabilityProvider(turn.botId ?? "", undefined));
     const composite = new CompositeCapabilityRuntime(providers);
     await composite.mountAll({ grant, signal: abort.signal });
