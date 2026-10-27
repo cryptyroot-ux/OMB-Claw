@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 
 import { computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "../drivers/retry.ts";
 import { announcesAction, MAX_ANNOUNCEMENT_NUDGES, NUDGE_ANNOUNCED_ACTION } from "./announcement.ts";
+import { workspaceDir } from "../workspace.ts";
+import { snapshot as createCheckpoint } from "../checkpoints.ts";
 import { createRunScopedCapabilitySession, TOOL_OUTPUT_READ_CAPABILITY } from "./capability-runtime.ts";
 import type {
   AgentEngine,
@@ -434,7 +436,12 @@ export function createAgentEngine(dependencies: {
                 }
                 precomputed = null;
               } else {
-                await compact("auto");
+                let allowCompact = true;
+                if (request.hooks) {
+                  const hr = await request.hooks.run("pre_compact", { runId, threadId: request.threadId, botId: request.botId });
+                  allowCompact = hr.allow;
+                }
+                if (allowCompact) await compact("auto");
                 precomputed = null;
               }
             }
@@ -583,6 +590,7 @@ export function createAgentEngine(dependencies: {
               messages.push({ role: "assistant", content: responseText || null, toolCalls: responseCalls });
               emit(request.threadId, { type: "tool.calls", runId, calls: responseCalls });
               const batchImages: ModelContentPart[] = [];
+              const checkpointHashes = new Map<string, string>();
               // Classify: read-only tools (risk "read", no side effects) may run concurrently
               // (Claude Code pattern). Mutating tools run sequentially for safety.
               const allReadOnly = batch.every(({ descriptor }) => descriptor.risk === "read" && descriptor.sideEffect === false);
@@ -590,9 +598,21 @@ export function createAgentEngine(dependencies: {
               // Invoke phase: concurrent for all-read-only batches, sequential otherwise.
               const invoked: Array<{ call: CapabilityCall; descriptor: CapabilityDescriptor; result: CapabilityResult | null; uncertain: boolean }> = [];
               if (allReadOnly && batch.length > 1) {
-                const invokedResults = await Promise.all(batch.map(async ({ call, descriptor }) => {
+                // Pre-tool-use hooks (sequential, before concurrent invoke).
+                const preHookResults = request.hooks ? await Promise.all(batch.map(({ call }) =>
+                  request.hooks!.run("pre_tool_use", { runId, threadId: request.threadId, botId: request.botId, capabilityId: call.capabilityId, callId: call.callId, arguments: call.arguments })
+                )) : batch.map(() => ({ allow: true, messages: [] as string[], modifiedArguments: undefined }));
+                const invokedResults = await Promise.all(batch.map(async ({ call, descriptor }, idx) => {
                   signal.throwIfAborted();
+                  if (preHookResults[idx].allow === false) {
+                    return { call, descriptor, result: { callId: call.callId, ok: false, content: preHookResults[idx].messages.join("; ") || "Blocked by hook.", error: "denied" } as CapabilityResult, uncertain: false };
+                  }
                   const dispatchedAt = Date.now();
+                  let checkpointHash: string | null = null;
+                  if (descriptor.risk !== "read") {
+                    try { checkpointHash = await createCheckpoint(request.botId, workspaceDir(request.botId), `before ${call.capabilityId}`, signal, { pin: call.callId }); } catch {}
+                  }
+                  if (checkpointHash) checkpointHashes.set(call.callId, checkpointHash);
                   toolCalls++;
                   progress();
                   dependencies.store.beginCapabilityCall({
@@ -615,7 +635,28 @@ export function createAgentEngine(dependencies: {
               } else {
                 for (const { call, descriptor } of batch) {
                   signal.throwIfAborted();
+                  let preHookAllow = true;
+                  let preHookMsg = "";
+                  if (request.hooks) {
+                    const hr = await request.hooks.run("pre_tool_use", { runId, threadId: request.threadId, botId: request.botId, capabilityId: call.capabilityId, callId: call.callId, arguments: call.arguments });
+                    preHookAllow = hr.allow;
+                    preHookMsg = hr.messages.join("; ");
+                  }
+                  if (!preHookAllow) {
+                    const denied: CapabilityResult = { callId: call.callId, ok: false, content: preHookMsg || "Blocked by hook.", error: "denied" };
+                    dependencies.store.beginCapabilityCall({ runId, callId: call.callId, capabilityId: call.capabilityId, risk: descriptor.risk, status: "dispatching", startedAt: Date.now() });
+                    capabilityDispatched = true;
+                    dependencies.store.settleCapabilityCall(runId, call.callId, "failed", Date.now());
+                    emit(request.threadId, { type: "tool.result", runId, callId: call.callId, result: denied });
+                    messages.push({ role: "tool", content: JSON.stringify({ ok: false, result: denied.content }), toolCallId: call.callId });
+                    continue;
+                  }
                   const dispatchedAt = Date.now();
+                  let checkpointHash: string | null = null;
+                  if (descriptor.risk !== "read") {
+                    try { checkpointHash = await createCheckpoint(request.botId, workspaceDir(request.botId), `before ${call.capabilityId}`, signal, { pin: call.callId }); } catch {}
+                  }
+                  if (checkpointHash) checkpointHashes.set(call.callId, checkpointHash);
                   toolCalls++;
                   progress();
                   dependencies.store.beginCapabilityCall({
@@ -638,6 +679,7 @@ export function createAgentEngine(dependencies: {
 
               // Process phase: sequential, in order (settle, emit, push messages).
               for (const { call, result: rawResult, uncertain: wasUncertain } of invoked) {
+                const checkpointHash = checkpointHashes.get(call.callId) ?? null;
                 let result: CapabilityResult;
                 if (wasUncertain && rawResult === null) {
                   result = {
@@ -649,6 +691,7 @@ export function createAgentEngine(dependencies: {
                   };
                   try { dependencies.store.settleCapabilityCall(runId, call.callId, "recovery_required", Date.now()); } catch {}
                   emit(request.threadId, { type: "tool.result", runId, callId: call.callId, result });
+                  if (checkpointHash) emit(request.threadId, { type: "run.checkpoint_available", runId, callId: call.callId, checkpointHash });
                   updateStatus("recovery_required", "uncertain_side_effect");
                   emit(request.threadId, { type: "run.recovery_required", runId, callId: call.callId });
                   return;
@@ -658,6 +701,7 @@ export function createAgentEngine(dependencies: {
                 if (result.uncertain) {
                   dependencies.store.settleCapabilityCall(runId, call.callId, "recovery_required", Date.now());
                   emit(request.threadId, { type: "tool.result", runId, callId: call.callId, result });
+                  if (checkpointHash) emit(request.threadId, { type: "run.checkpoint_available", runId, callId: call.callId, checkpointHash });
                   updateStatus("recovery_required", result.error ?? "uncertain_side_effect");
                   emit(request.threadId, { type: "run.recovery_required", runId, callId: call.callId });
                   return;
@@ -666,6 +710,9 @@ export function createAgentEngine(dependencies: {
                 dependencies.store.settleCapabilityCall(runId, call.callId, result.ok ? "succeeded" : "failed", Date.now());
                 if (!result.ok) capabilityFailure = true;
                 emit(request.threadId, { type: "tool.result", runId, callId: call.callId, result });
+                if (request.hooks) {
+                  void request.hooks.run("post_tool_use", { runId, threadId: request.threadId, botId: request.botId, capabilityId: call.capabilityId, callId: call.callId, arguments: call.arguments, result: { ok: result.ok, content: result.content } });
+                }
                 if (result.images?.length && modelCapabilities.imageInput !== "supported") {
                   throw new AgentRuntimeError("unsupported_capability", "The capability returned an image result the selected model cannot receive");
                 }

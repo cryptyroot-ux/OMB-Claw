@@ -235,7 +235,8 @@ export type AgentEvent =
   | { readonly type: "run.failed"; readonly runId: RunId; readonly message: string }
   | { readonly type: "run.interrupted"; readonly runId: RunId }
   | { readonly type: "run.compacted"; readonly runId: RunId; readonly summary: string; readonly firstKeptIndex: number; readonly tokenEstimate: number; readonly trigger: "auto" | "overflow" }
-  | { readonly type: "run.recovery_required"; readonly runId: RunId; readonly callId: CapabilityCallId };
+  | { readonly type: "run.recovery_required"; readonly runId: RunId; readonly callId: CapabilityCallId }
+  | { readonly type: "run.checkpoint_available"; readonly runId: RunId; readonly callId: CapabilityCallId; readonly checkpointHash: string };
 
 export interface AgentRunRequest {
   readonly botId: BotId;
@@ -256,6 +257,10 @@ export interface AgentRunRequest {
   };
   /** Nudge a reply that announces a step and ends without a tool call, at most three times per run. */
   readonly nudgeAnnouncedAction?: boolean;
+  /** Optional hook runner (PreToolUse/PostToolUse/PreCompact/Stop). */
+  readonly hooks?: {
+    run(event: "pre_tool_use" | "post_tool_use" | "pre_compact" | "stop" | "session_start" | "session_end", context: { readonly runId: string; readonly threadId: string; readonly botId: string; readonly capabilityId?: string; readonly callId?: string; readonly arguments?: unknown; readonly result?: { readonly ok: boolean; readonly content: string }; readonly reason?: string }): Promise<{ readonly allow: boolean; readonly messages: ReadonlyArray<string>; readonly modifiedArguments?: unknown }>;
+  };
 }
 
 export interface AgentRunHandle {
