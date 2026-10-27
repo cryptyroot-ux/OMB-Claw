@@ -1,7 +1,7 @@
 {
   "name": "openmausbot",
   "private": true,
-  "version": "0.1.127",
+  "version": "0.2.0",
   "description": "OMB Claw: a standalone agent platform with an OMB-owned engine, provider adapters, and a unified capability runtime.",
   "homepage": "https://github.com/cryptyroot-ux/OMB-Claw",
   "repository": {
