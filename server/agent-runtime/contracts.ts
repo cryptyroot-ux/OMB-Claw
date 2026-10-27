@@ -158,6 +158,7 @@ export interface CapabilityProvider {
   readonly id: CapabilityId;
   readonly kind: "mcp" | "native-tool" | "skill" | "browser" | "computer" | "data";
   list(grant: CapabilityGrant): ReadonlyArray<CapabilityDescriptor>;
+  validate(call: CapabilityCall, grant: CapabilityGrant): void;
   mount(context: { readonly grant: CapabilityGrant; readonly signal: AbortSignal }): Promise<void>;
   invoke(call: CapabilityCall, context: { readonly grant: CapabilityGrant; readonly signal: AbortSignal }): Promise<CapabilityResult>;
   close(): Promise<void>;

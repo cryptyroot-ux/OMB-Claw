@@ -239,6 +239,48 @@ export class InMemoryCapabilitySession implements CapabilitySession {
 import { readFileSync } from "node:fs";
 import { enabledSkillFile, resolveBotSkills } from "../skills.ts";
 
+/** Adapts an existing CapabilitySession to a CapabilityProvider so legacy bridges (MCP, etc.)
+ *  participate in the unified lifecycle without a rewrite. */
+export class SessionCapabilityProvider implements CapabilityProvider {
+  readonly id: CapabilityId;
+  readonly kind: CapabilityProvider["kind"];
+  private readonly session: CapabilitySession;
+  private readonly label: string;
+  private closed = false;
+
+  constructor(id: string, kind: CapabilityProvider["kind"], session: CapabilitySession, label: string) {
+    this.id = id as CapabilityId;
+    this.kind = kind;
+    this.session = session;
+    this.label = label;
+  }
+
+  list(grant: CapabilityGrant): ReadonlyArray<CapabilityDescriptor> {
+    if (this.closed) return [];
+    return this.session.list(grant);
+  }
+
+  validate(call: CapabilityCall, grant: CapabilityGrant): void {
+    if (this.closed) throw new Error("Capability runtime is closed");
+    this.session.validate(call, grant);
+  }
+
+  async mount(): Promise<void> { /* session already mounted by caller */ }
+
+  async invoke(call: CapabilityCall, context: { readonly grant: CapabilityGrant; readonly signal: AbortSignal }): Promise<CapabilityResult> {
+    if (this.closed) return { callId: call.callId, ok: false, content: "closed", error: "closed" };
+    return this.session.invoke(call, context);
+  }
+
+  async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    await this.session.close().catch(() => {});
+  }
+
+  describe(): string { return this.label; }
+}
+
 /** Composite capability runtime: aggregates multiple CapabilityProviders behind one
  *  CapabilitySession so a turn uses one mount/invoke/close path and one policy. */
 export class CompositeCapabilityRuntime implements CapabilitySession {
@@ -271,6 +313,7 @@ export class CompositeCapabilityRuntime implements CapabilitySession {
     // Grant check is centralized here (one policy).
     if (grant.denied.has(call.capabilityId)) throw new Error(`Capability denied: ${call.capabilityId}`);
     if (grant.allowed.size > 0 && !grant.allowed.has(call.capabilityId)) throw new Error(`Capability not allowed: ${call.capabilityId}`);
+    provider.validate(call, grant);
   }
 
   async invoke(call: CapabilityCall, context: { readonly grant: CapabilityGrant; readonly signal: AbortSignal }): Promise<CapabilityResult> {
@@ -332,6 +375,15 @@ export class SkillCapabilityProvider implements CapabilityProvider {
       sideEffect: false,
       timeoutMs: 5_000,
     }));
+  }
+
+  validate(call: CapabilityCall, grant: CapabilityGrant): void {
+    if (this.closed) throw new Error("Capability runtime is closed");
+    if (!this.enabledSkills().some((skill) => `skill:${skill.name}` === call.capabilityId)) {
+      throw new Error(`Unknown capability: ${call.capabilityId}`);
+    }
+    if (grant.denied.has(call.capabilityId)) throw new Error(`Capability denied: ${call.capabilityId}`);
+    if (grant.allowed.size > 0 && !grant.allowed.has(call.capabilityId)) throw new Error(`Capability not allowed: ${call.capabilityId}`);
   }
 
   async mount(_ctx: { readonly grant: CapabilityGrant; readonly signal: AbortSignal }): Promise<void> { /* skills are files; nothing to mount */ }

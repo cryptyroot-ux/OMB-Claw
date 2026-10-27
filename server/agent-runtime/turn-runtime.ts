@@ -7,6 +7,7 @@ import { ChatProtocolError } from "../drivers/openai-chat-protocol.ts";
 import type { createChatToolApproval } from "../drivers/chat-tool-approval.ts";
 import { toolSchemaProfileFor } from "../tool-schema-profile.ts";
 import { createChatCapabilitySession } from "./chat-capability-runtime.ts";
+import { CompositeCapabilityRuntime, SessionCapabilityProvider, SkillCapabilityProvider } from "./capability-runtime.ts";
 import type { AgentEngine, CapabilityGrant, CapabilitySession } from "./contracts.ts";
 
 export interface NativeSteerState {
@@ -108,8 +109,6 @@ export async function runNativeTurn(context: NativeTurnContext): Promise<void> {
     if (questionAllowed && !tools.definitions.some((definition) => definition.function.name === ASK_USER_TOOL)) {
       tools.definitions.push(ASK_USER_TOOL_DEFINITION);
     }
-    capabilitySession = createChatCapabilitySession({ session: tools, approval });
-
     const grant: CapabilityGrant = {
       botId: turn.botId ?? "",
       threadId: turn.threadId,
@@ -117,6 +116,15 @@ export async function runNativeTurn(context: NativeTurnContext): Promise<void> {
       allowed: new Set(),
       denied: new Set(),
     };
+    const mcpSession = createChatCapabilitySession({ session: tools, approval });
+    const providers = [
+      new SessionCapabilityProvider("mcp", "mcp", mcpSession, "MCP tools"),
+      new SkillCapabilityProvider(turn.botId ?? "", undefined),
+    ];
+    const composite = new CompositeCapabilityRuntime(providers);
+    await composite.mountAll({ grant, signal: abort.signal });
+    capabilitySession = composite;
+
     const nativeMessages = messages.slice(0, -1).map((message) => ({
       role: message.role,
       content: typeof message.content === "string" ? message.content : null,
