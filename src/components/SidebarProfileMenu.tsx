@@ -205,7 +205,20 @@ function useServerUpdateItem(enabled: boolean): UpdateEntry | null {
       attention: phase === "available" || phase === "reload" || phase === "error",
       attentionTone: phase === "error" ? "danger" : "accent",
       onSelect: () => {
-        if (phase === "available" && check?.releaseUrl) return void openExternalLink(check.releaseUrl);
+        if (phase === "available") {
+          // Auto-update: trigger server-side update instead of opening release page
+          void api("/api/updates/apply", { method: "POST", timeoutMs: 10_000 })
+            .then(() => {
+              setPhase("checking");
+              // Poll for restart
+              setTimeout(() => window.location.reload(), 15_000);
+            })
+            .catch(() => {
+              // Fallback: open release page
+              if (check?.releaseUrl) void openExternalLink(check.releaseUrl);
+            });
+          return;
+        }
         if (phase === "reload") return window.location.reload();
         setPhase("checking");
         void api<ServerUpdateCheck>("/api/updates/check", { timeoutMs: 20_000 })
