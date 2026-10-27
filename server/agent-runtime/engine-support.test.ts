@@ -27,7 +27,7 @@ describe("engine support policy", () => {
   });
 
   it("keeps API model providers supported", () => {
-    for (const kind of ["openai-compat", "grok", "minimax", "mistral", "cerebras", "groq", "meta"]) {
+    for (const kind of ["openai-compat", "grok", "minimax", "mistral", "cerebras", "groq", "meta", "anthropic", "gemini", "openai-responses"]) {
       expect(isExternalAgentEngine(kind), kind).toBe(false);
     }
   });
@@ -44,7 +44,7 @@ describe("engine support policy", () => {
   });
 
   it("routes every registered API driver through the native engine", () => {
-    for (const kind of ["openai-compat", "grok", "groq", "meta", "minimax", "mistral", "cerebras"]) {
+    for (const kind of ["openai-compat", "grok", "groq", "meta", "minimax", "mistral", "cerebras", "anthropic", "gemini", "openai-responses"]) {
       expect(usesNativeAgentEngine(kind), kind).toBe(true);
     }
     expect(usesNativeAgentEngine("claudeAgent")).toBe(false);
