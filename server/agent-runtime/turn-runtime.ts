@@ -127,10 +127,10 @@ export async function runNativeTurn(context: NativeTurnContext): Promise<void> {
       new SessionCapabilityProvider("mcp", "mcp", mcpSession, "MCP tools"),
     ];
     if (context.toolsEnabled) {
-      providers.push(new NativeFileCapabilityProvider({ root: fileRoot }, scope));
-      providers.push(new NativeShellCapabilityProvider({ root: fileRoot }, scope));
-      providers.push(new NativeGitCapabilityProvider({ root: fileRoot }, scope));
-      providers.push(new NativeWebCapabilityProvider({ root: fileRoot }, scope));
+      providers.push(new NativeFileCapabilityProvider({ root: fileRoot }));
+      providers.push(new NativeShellCapabilityProvider({ root: fileRoot }));
+      providers.push(new NativeGitCapabilityProvider({ root: fileRoot }));
+      providers.push(new NativeWebCapabilityProvider({ root: fileRoot }));
     }
     providers.push(new SkillCapabilityProvider(turn.botId ?? "", undefined));
     const composite = new CompositeCapabilityRuntime(providers);
