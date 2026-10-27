@@ -506,7 +506,7 @@ export function createAgentEngine(dependencies: {
                       break;
                   }
                 }
-                if (!sawCompletion) throw modelEventFailure("The model stream ended without a completion event");
+                if (!sawCompletion) throw modelEventFailure("Stream ended before completion");
                 if (budgetExhausted) {
                   throw new AgentRuntimeError("budget_exhausted", "Turn stopped at the configured token, cost, or time budget.");
                 }
