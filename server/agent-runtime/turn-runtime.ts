@@ -8,6 +8,8 @@ import type { createChatToolApproval } from "../drivers/chat-tool-approval.ts";
 import { toolSchemaProfileFor } from "../tool-schema-profile.ts";
 import { createChatCapabilitySession } from "./chat-capability-runtime.ts";
 import { CompositeCapabilityRuntime, SessionCapabilityProvider, SkillCapabilityProvider } from "./capability-runtime.ts";
+import { NativeFileCapabilityProvider } from "./native-file-capability-provider.ts";
+import { workspaceDir } from "../workspace.ts";
 import type { AgentEngine, CapabilityGrant, CapabilitySession } from "./contracts.ts";
 
 export interface NativeSteerState {
@@ -117,8 +119,10 @@ export async function runNativeTurn(context: NativeTurnContext): Promise<void> {
       denied: new Set(),
     };
     const mcpSession = createChatCapabilitySession({ session: tools, approval });
+    const fileRoot = turn.botId ? workspaceDir(turn.botId) : process.cwd();
     const providers = [
       new SessionCapabilityProvider("mcp", "mcp", mcpSession, "MCP tools"),
+      new NativeFileCapabilityProvider({ root: fileRoot }),
       new SkillCapabilityProvider(turn.botId ?? "", undefined),
     ];
     const composite = new CompositeCapabilityRuntime(providers);
