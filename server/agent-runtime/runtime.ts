@@ -11,6 +11,7 @@ import type {
   AgentRunStatus,
   AgentRunStore,
   CapabilityCall,
+  CapabilityDescriptor,
   CapabilityResult,
   ModelAdapter,
   ModelAdapterError,
@@ -497,26 +498,64 @@ export function createAgentEngine(dependencies: {
               messages.push({ role: "assistant", content: responseText || null, toolCalls: responseCalls });
               emit(request.threadId, { type: "tool.calls", runId, calls: responseCalls });
               const batchImages: ModelContentPart[] = [];
-              for (const { call, descriptor } of batch) {
-                signal.throwIfAborted();
-                const dispatchedAt = Date.now();
-                toolCalls++;
-                progress();
-                dependencies.store.beginCapabilityCall({
-                  runId,
-                  callId: call.callId,
-                  capabilityId: call.capabilityId,
-                  risk: descriptor.risk,
-                  status: "dispatching",
-                  startedAt: dispatchedAt,
-                });
-                capabilityDispatched = true;
+              // Classify: read-only tools (risk "read", no side effects) may run concurrently
+              // (Claude Code pattern). Mutating tools run sequentially for safety.
+              const allReadOnly = batch.every(({ descriptor }) => descriptor.risk === "read" && descriptor.sideEffect === false);
 
+              // Invoke phase: concurrent for all-read-only batches, sequential otherwise.
+              const invoked: Array<{ call: CapabilityCall; descriptor: CapabilityDescriptor; result: CapabilityResult | null; uncertain: boolean }> = [];
+              if (allReadOnly && batch.length > 1) {
+                const invokedResults = await Promise.all(batch.map(async ({ call, descriptor }) => {
+                  signal.throwIfAborted();
+                  const dispatchedAt = Date.now();
+                  toolCalls++;
+                  progress();
+                  dependencies.store.beginCapabilityCall({
+                    runId,
+                    callId: call.callId,
+                    capabilityId: call.capabilityId,
+                    risk: descriptor.risk,
+                    status: "dispatching",
+                    startedAt: dispatchedAt,
+                  });
+                  capabilityDispatched = true;
+                  try {
+                    const r = await runCapabilities.invoke(call, { grant: request.grant, signal });
+                    return { call, descriptor, result: r, uncertain: !!r.uncertain };
+                  } catch {
+                    return { call, descriptor, result: null, uncertain: true };
+                  }
+                }));
+                for (const r of invokedResults) invoked.push(r);
+              } else {
+                for (const { call, descriptor } of batch) {
+                  signal.throwIfAborted();
+                  const dispatchedAt = Date.now();
+                  toolCalls++;
+                  progress();
+                  dependencies.store.beginCapabilityCall({
+                    runId,
+                    callId: call.callId,
+                    capabilityId: call.capabilityId,
+                    risk: descriptor.risk,
+                    status: "dispatching",
+                    startedAt: dispatchedAt,
+                  });
+                  capabilityDispatched = true;
+                  try {
+                    const r = await runCapabilities.invoke(call, { grant: request.grant, signal });
+                    invoked.push({ call, descriptor, result: r, uncertain: !!r.uncertain });
+                  } catch {
+                    invoked.push({ call, descriptor, result: null, uncertain: true });
+                  }
+                }
+              }
+
+              // Process phase: sequential, in order (settle, emit, push messages).
+              for (const { call, result: rawResult, uncertain: wasUncertain } of invoked) {
                 let result: CapabilityResult;
-                try {
-                  result = await runCapabilities.invoke(call, { grant: request.grant, signal });
-                } catch {
-                  const uncertain: CapabilityResult = {
+                if (wasUncertain && rawResult === null) {
+                  result = {
                     callId: call.callId,
                     ok: false,
                     content: "The operation may have taken effect. Inspect its state before continuing.",
@@ -524,11 +563,12 @@ export function createAgentEngine(dependencies: {
                     error: "uncertain_side_effect",
                   };
                   try { dependencies.store.settleCapabilityCall(runId, call.callId, "recovery_required", Date.now()); } catch {}
-                  emit(request.threadId, { type: "tool.result", runId, callId: call.callId, result: uncertain });
+                  emit(request.threadId, { type: "tool.result", runId, callId: call.callId, result });
                   updateStatus("recovery_required", "uncertain_side_effect");
                   emit(request.threadId, { type: "run.recovery_required", runId, callId: call.callId });
                   return;
                 }
+                result = rawResult!;
 
                 if (result.uncertain) {
                   dependencies.store.settleCapabilityCall(runId, call.callId, "recovery_required", Date.now());
