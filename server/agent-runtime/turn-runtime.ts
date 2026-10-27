@@ -1,12 +1,13 @@
 import type { RuntimeEvent, SendTurnInput } from "../contracts.ts";
-import { ASK_USER_TOOL, ASK_USER_TOOL_DEFINITION } from "../../shared/ask-question.ts";
-import { allowsTool, parseToolScope } from "../../shared/tool-scope.ts";
+import { allowsTool, parseToolScope, selectorIdentity } from "../../shared/tool-scope.ts";
+import { ASK_USER_TOOL, ASK_USER_TOOL_DEFINITION, parseAskQuestions, askQuestionSummary } from "../../shared/ask-question.ts";
+import { chatToolName } from "../drivers/chat-mcp-tools.ts";
 import { mountChatTools, type ChatToolSession } from "../drivers/chat-mcp-tools.ts";
 import type { ChatImagePart } from "../drivers/chat-images.ts";
 import { ChatProtocolError } from "../drivers/openai-chat-protocol.ts";
 import type { createChatToolApproval } from "../drivers/chat-tool-approval.ts";
 import { toolSchemaProfileFor } from "../tool-schema-profile.ts";
-import { createChatCapabilitySession } from "./chat-capability-runtime.ts";
+import { createChatCapabilitySession, type ChatCapabilityApproval } from "./chat-capability-runtime.ts";
 import { CompositeCapabilityRuntime, SessionCapabilityProvider, SkillCapabilityProvider } from "./capability-runtime.ts";
 import { NativeFileCapabilityProvider } from "./native-file-capability-provider.ts";
 import { NativeGitCapabilityProvider } from "./native-git-capability-provider.ts";
@@ -14,7 +15,7 @@ import { NativeWebCapabilityProvider } from "./native-web-capability-provider.ts
 import { ToolSearchCapabilityProvider } from "./tool-search-capability-provider.ts";
 import { NativeShellCapabilityProvider } from "./native-shell-capability-provider.ts";
 import { workspaceDir } from "../workspace.ts";
-import type { AgentEngine, CapabilityGrant, CapabilitySession } from "./contracts.ts";
+import type { AgentEngine, CapabilityGrant, CapabilitySession, CapabilityProvider, CapabilityDescriptor, CapabilityCall, CapabilityResult } from "./contracts.ts";
 import { plainFailureMessage } from "../drivers/engine-errors.ts";
 
 export interface NativeSteerState {
@@ -46,6 +47,85 @@ export interface NativeTurnContext {
 
 /** The OMB-owned native turn: mount capabilities, run the engine, bridge events, and close everything. The driver
  * supplies admission, approval, and the prepared messages; it never owns the model/tool cycle. */
+
+
+/** Native ask_user capability provider - handles user questions directly without MCP */
+class AskUserCapabilityProvider implements CapabilityProvider {
+  readonly id = "native-ask-user";
+  readonly kind = "native-tool" as const;
+  private readonly approval: ChatCapabilityApproval;
+  private closed = false;
+
+  constructor(approval: ChatCapabilityApproval) {
+    this.approval = approval;
+  }
+
+  list(grant: CapabilityGrant): ReadonlyArray<CapabilityDescriptor> {
+    if (this.closed) return [];
+    if (grant.denied.has("ask_user")) return [];
+    if (grant.allowed.size > 0 && !grant.allowed.has("ask_user")) return [];
+    return [{
+      id: "ask_user",
+      name: "ask_user",
+      description: "Ask the user a question and get their answer.",
+      schema: {
+        type: "object",
+        properties: {
+          questions: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                question: { type: "string" },
+                options: { type: "array", items: { type: "object", properties: { label: { type: "string" } }, required: ["label"] } }
+              },
+              required: ["question"]
+            },
+            minItems: 1,
+            maxItems: 6
+          }
+        },
+        required: ["questions"],
+        additionalProperties: false
+      },
+      risk: "read" as const,
+      sideEffect: false,
+      timeoutMs: 60_000,
+      optional: true
+    }];
+  }
+
+  validate(call: CapabilityCall, grant: CapabilityGrant): void {
+    if (this.closed) throw new Error("Capability provider is closed");
+    if (call.capabilityId !== "ask_user") throw new Error(`Unknown capability: ${call.capabilityId}`);
+    if (grant.denied.has("ask_user")) throw new Error("Capability denied: ask_user");
+    if (grant.allowed.size > 0 && !grant.allowed.has("ask_user")) throw new Error("Capability not allowed: ask_user");
+    if (!parseAskQuestions(call.arguments)) throw new Error("The ask_user arguments are malformed");
+  }
+
+  async mount(): Promise<void> { /* no process */ }
+
+  async invoke(call: CapabilityCall, context: { readonly grant: CapabilityGrant; readonly signal: AbortSignal }): Promise<CapabilityResult> {
+    if (this.closed) return { callId: call.callId, ok: false, content: "closed", error: "closed" };
+    if (call.capabilityId !== "ask_user") return { callId: call.callId, ok: false, content: "Unknown capability", error: "not_found" };
+    if (!parseAskQuestions(call.arguments)) return { callId: call.callId, ok: false, content: "The ask_user arguments are malformed.", error: "invalid_arguments" };
+    
+    const questions = parseAskQuestions(call.arguments)!;
+    const answer = await this.approval.question(ASK_USER_TOOL, askQuestionSummary(questions), questions);
+    context.signal.throwIfAborted();
+    
+    return {
+      callId: call.callId,
+      ok: true,
+      content: answer ?? "The person did not answer this question. Do not guess an answer; ask again later or proceed without it."
+    };
+  }
+
+  async close(): Promise<void> { this.closed = true; }
+
+  describe(): string { return "native ask_user tool"; }
+}
+
 export async function runNativeTurn(context: NativeTurnContext): Promise<void> {
   const { turn, messages, model, turnId, abort, approval, engine } = context;
   let tools: ChatToolSession | undefined;
@@ -117,12 +197,37 @@ export async function runNativeTurn(context: NativeTurnContext): Promise<void> {
     if (questionAllowed && !tools.definitions.some((definition) => definition.function.name === ASK_USER_TOOL)) {
       tools.definitions.push(ASK_USER_TOOL_DEFINITION);
     }
+    // Populate grant from toolScope using transformed tool names (matching chatToolName)
+    const allowed = new Set<string>();
+    const denied = new Set<string>();
+    if (scope) {
+      for (const selector of scope.allow ?? []) {
+        const identity = selectorIdentity(selector);
+        if (identity) {
+          if (identity.kind === "mcp") {
+            allowed.add(chatToolName(identity.server, identity.name));
+          } else {
+            allowed.add(identity.name);
+          }
+        }
+      }
+      for (const selector of scope.deny ?? []) {
+        const identity = selectorIdentity(selector);
+        if (identity) {
+          if (identity.kind === "mcp") {
+            denied.add(chatToolName(identity.server, identity.name));
+          } else {
+            denied.add(identity.name);
+          }
+        }
+      }
+    }
     const grant: CapabilityGrant = {
       botId: turn.botId ?? "",
       threadId: turn.threadId,
       approvalMode: turn.approvalMode === "full" ? "full" : "ask",
-      allowed: new Set(),
-      denied: new Set(),
+      allowed,
+      denied,
     };
     const mcpSession = createChatCapabilitySession({ session: tools, approval });
     const fileRoot = turn.botId ? workspaceDir(turn.botId) : process.cwd();
@@ -137,6 +242,10 @@ export async function runNativeTurn(context: NativeTurnContext): Promise<void> {
     providers.push(new NativeGitCapabilityProvider({ root: fileRoot }, scope));
     providers.push(new NativeWebCapabilityProvider({ root: fileRoot }, scope));
     if (allowsTool(scope, { kind: "native", name: "tool_search" })) providers.push(new ToolSearchCapabilityProvider(() => mcpSession));
+    // Native ask_user tool - handled directly without MCP
+    if (context.toolsEnabled() && allowsTool(scope, { kind: "native", name: ASK_USER_TOOL })) {
+      providers.push(new AskUserCapabilityProvider(approval));
+    }
     providers.push(new SkillCapabilityProvider(turn.botId ?? "", undefined));
     const composite = new CompositeCapabilityRuntime(providers);
     await composite.mountAll({ grant, signal: abort.signal });
@@ -215,6 +324,7 @@ export async function runNativeTurn(context: NativeTurnContext): Promise<void> {
       providerModel: { providerId: context.driverKind, modelId: model },
       grant,
       capabilities: capabilitySession,
+      toolScope: turn.toolScope,
       signal: abort.signal,
       ...(turn.budget ? { budget: turn.budget } : {}),
       ...(nativeImages.length ? { images: nativeImages } : {}),

@@ -33,7 +33,7 @@ async function runTurn(body: string | (() => Response), driver: "openai-compat" 
       });
   const events: RuntimeEvent[] = [];
   instance.adapter.onEvent((event) => events.push(event));
-  await instance.adapter.sendTurn({ threadId: "thread", text: "hi" });
+  await instance.adapter.sendTurn({ agentEngine: "omb-native", threadId: "thread", text: "hi" });
   await vi.waitFor(() => {
     if (!events.some((event) => event.type === "turn.completed")) throw new Error("turn still running");
   });
@@ -166,7 +166,7 @@ describe("createOpenAIChatRuntime tool approvals", () => {
       : await MinimaxDriver.create({ ...common, config: MinimaxDriver.defaultConfig() });
     const events: RuntimeEvent[] = []; instance.adapter.onEvent((event) => events.push(event));
     try {
-      await instance.adapter.sendTurn({ threadId: "scoped-api", text: "Use only the selected tool.", approvalMode: "full", toolScope: { allow: ["mcp:fx:write"] }, integrations: { custom: { fx: toolServer(receipt) } } });
+      await instance.adapter.sendTurn({ agentEngine: "omb-native", threadId: "scoped-api", text: "Use only the selected tool.", approvalMode: "full", toolScope: { allow: ["mcp:fx:write"] }, integrations: { custom: { fx: toolServer(receipt) } } });
       await vi.waitFor(() => expect(bodies.length).toBeGreaterThan(0), { timeout: 10_000 });
       expect(bodies[0].tools.map((tool: any) => tool.function.name)).toEqual(["fx_write"]);
       await vi.waitFor(() => expect(events.some((event) => event.type === "turn.completed")).toBe(true), { timeout: 10_000 });
@@ -192,7 +192,7 @@ describe("createOpenAIChatRuntime tool approvals", () => {
     });
     const events: RuntimeEvent[] = [];
     instance.adapter.onEvent((event) => events.push(event));
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ agentEngine: "omb-native",
       threadId: "thread", text: "hi", approvalMode,
       integrations: { custom: { fx: toolServer() } },
     });
@@ -235,7 +235,7 @@ describe("createOpenAIChatRuntime tool approvals", () => {
     });
     const events: RuntimeEvent[] = [];
     instance.adapter.onEvent((event) => events.push(event));
-    await instance.adapter.sendTurn({ threadId: "thread", text: "hi", approvalMode: "full" });
+    await instance.adapter.sendTurn({ agentEngine: "omb-native", threadId: "thread", text: "hi", approvalMode: "full" });
     const opened = await vi.waitFor(() => {
       const found = events.find((event) => event.type === "request.opened");
       if (!found) throw new Error("waiting for the question card");
@@ -301,7 +301,7 @@ describe("createOpenAIChatRuntime tool approvals", () => {
     const events: RuntimeEvent[] = [];
     instance.adapter.onEvent((event) => events.push(event));
     try {
-      await instance.adapter.sendTurn({
+      await instance.adapter.sendTurn({ agentEngine: "omb-native",
         threadId: "toolerr", text: "Use the tool, then answer.", approvalMode: "full",
         integrations: { custom: { fx: { command: script, args: [], env: {} } } },
       });
@@ -339,7 +339,7 @@ describe("createOpenAIChatRuntime tool approvals", () => {
       const events: RuntimeEvent[] = [];
       instance.adapter.onEvent((event) => events.push(event));
       try {
-        await instance.adapter.sendTurn({
+        await instance.adapter.sendTurn({ agentEngine: "omb-native",
           threadId: "corrective", text: "Use the tool, then answer.", approvalMode: "full",
           ...(rounds === undefined ? {} : { toolErrorCorrectiveRounds: rounds }), ...(integrations ? { integrations } : {}),
         });
@@ -399,7 +399,7 @@ describe("createOpenAIChatRuntime tool approvals", () => {
     const events: RuntimeEvent[] = [];
     instance.adapter.onEvent((event) => events.push(event));
     try {
-      await instance.adapter.sendTurn({ threadId: "noreply", text: "hi", approvalMode: "full" });
+      await instance.adapter.sendTurn({ agentEngine: "omb-native", threadId: "noreply", text: "hi", approvalMode: "full" });
       const opened = await vi.waitFor(() => {
         const found = events.find((event) => event.type === "request.opened");
         if (!found) throw new Error("waiting for the question card");
@@ -485,7 +485,7 @@ describe("createOpenAIChatRuntime mid-turn steer", () => {
     });
     const events: RuntimeEvent[] = [];
     instance.adapter.onEvent((event) => events.push(event));
-    await instance.adapter.sendTurn({ threadId: "t", text: "hi", approvalMode: "full" });
+    await instance.adapter.sendTurn({ agentEngine: "omb-native", threadId: "t", text: "hi", approvalMode: "full" });
     await vi.waitFor(() => expect(bodies).toHaveLength(1), { timeout: 10_000 });
     await expect(instance.adapter.steer!("t", "one more thing")).resolves.toBe("steered");
     release(answer("first answer."));
@@ -519,7 +519,7 @@ describe("createOpenAIChatRuntime mid-turn steer", () => {
     });
     const events: RuntimeEvent[] = [];
     instance.adapter.onEvent((event) => events.push(event));
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ agentEngine: "omb-native",
       threadId: "t", text: "hi", approvalMode: "full",
       integrations: { custom: { fx: toolServer() } },
     });
@@ -596,7 +596,7 @@ describe("createOpenAIChatRuntime stream termination", () => {
     });
     const events: RuntimeEvent[] = [];
     instance.adapter.onEvent((event) => events.push(event));
-    await instance.adapter.sendTurn({ threadId: "thread", text: "hi" });
+    await instance.adapter.sendTurn({ agentEngine: "omb-native", threadId: "thread", text: "hi" });
     // The final frame's tail arrives in a second chunk, after a complete earlier frame.
     controller!.enqueue(
       encoder.encode(
@@ -764,7 +764,7 @@ describe("createOpenAIChatRuntime HTTP error text", () => {
     });
     const events: RuntimeEvent[] = [];
     const stop = instance.adapter.onEvent((event) => events.push(event));
-    await instance.adapter.sendTurn({ threadId: "thread", text: "hi" });
+    await instance.adapter.sendTurn({ agentEngine: "omb-native", threadId: "thread", text: "hi" });
     await vi.waitFor(() => {
       if (!events.some((event) => event.type === "turn.completed")) throw new Error("turn still running");
     });
@@ -808,7 +808,7 @@ describe("createOpenAIChatRuntime rejected keys", () => {
   const turn = async (instance: Awaited<ReturnType<typeof create>>) => {
     const events: RuntimeEvent[] = [];
     const stop = instance.adapter.onEvent((event) => events.push(event));
-    await instance.adapter.sendTurn({ threadId: "thread", text: "hi" });
+    await instance.adapter.sendTurn({ agentEngine: "omb-native", threadId: "thread", text: "hi" });
     await vi.waitFor(() => {
       if (!events.some((event) => event.type === "turn.completed")) throw new Error("turn still running");
     });

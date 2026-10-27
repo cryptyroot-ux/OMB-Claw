@@ -386,8 +386,7 @@ export function createAgentEngine(dependencies: {
           let allowTools = true;
           let sizeRetries = 0;
           while (modelRounds < MAX_MODEL_ROUNDS) {
-            capabilityFailure = false;
-                        signal.throwIfAborted();
+            signal.throwIfAborted();
             if (control.steers.length) {
               for (const text of control.steers.splice(0)) messages.push({ role: "user", content: text });
               precomputed = null;
@@ -506,7 +505,7 @@ export function createAgentEngine(dependencies: {
                       break;
                   }
                 }
-                if (!sawCompletion) throw modelEventFailure("Stream ended before completion");
+                if (!sawCompletion || finishReason === null) throw modelEventFailure("Stream ended before completion");
                 if (budgetExhausted) {
                   throw new AgentRuntimeError("budget_exhausted", "Turn stopped at the configured token, cost, or time budget.");
                 }
@@ -587,6 +586,9 @@ export function createAgentEngine(dependencies: {
               if (toolCalls + responseCalls.length > MAX_TOOL_CALLS) throw new AgentRuntimeError("tool_budget_exceeded", `Stopped after ${MAX_TOOL_CALLS} tool calls`);
 
               const batch: Array<{ readonly call: CapabilityCall; readonly descriptor: (typeof toolDescriptors)[number] }> = [];
+              // Reset capability failure for this new batch of tool calls;
+              // it will be re-set to true if any call in this batch fails or is excluded.
+              capabilityFailure = false;
               for (const modelCall of responseCalls) {
                 if (!modelCall.id.trim() || seenCallIds.has(modelCall.id)) throw new AgentRuntimeError("invalid_tool_call", "The model reused or omitted a tool-call ID");
                 seenCallIds.add(modelCall.id);
@@ -594,10 +596,11 @@ export function createAgentEngine(dependencies: {
                 if (!descriptor) {
                   if (modelCall.name === "tool_output_read") throw new AgentRuntimeError("capability_not_granted", `The model requested an unavailable capability: ${modelCall.name}`);
                   const parsed = parseToolScope(request.toolScope);
+                  const scope = parsed.ok ? parsed.scope : undefined;
                   // Check both native and mcp identities
-                  const nativeExcluded = parsed.ok && !allowsTool(parsed.scope, { kind: "native", name: modelCall.name });
-                  const mcpExcluded = parsed.ok && !allowsTool(parsed.scope, { kind: "mcp", server: "fx", name: modelCall.name });
-                  const excluded = nativeExcluded && mcpExcluded;
+                  const nativeExcluded = parsed.ok && !allowsTool(scope, { kind: "native", name: modelCall.name });
+                  const mcpExcluded = parsed.ok && !allowsTool(scope, { kind: "mcp", server: "fx", name: modelCall.name });
+                  const excluded = nativeExcluded || mcpExcluded;
                   const msg = excluded ? "tool selection excludes this tool" : `Unknown capability: ${modelCall.name}`;
                   emit(request.threadId, { type: "tool.result", runId, callId: modelCall.id, result: { callId: modelCall.id, ok: false, content: msg, error: "not_found" } });
                   messages.push({ role: "tool", content: JSON.stringify({ ok: false, result: msg }), toolCallId: modelCall.id });
@@ -616,6 +619,7 @@ export function createAgentEngine(dependencies: {
               messages.push({ role: "assistant", content: responseText || null, toolCalls: responseCalls });
               emit(request.threadId, { type: "tool.calls", runId, calls: responseCalls });
               const batchImages: ModelContentPart[] = [];
+
               const checkpointHashes = new Map<string, string>();
               // Classify: read-only tools (risk "read", no side effects) may run concurrently
               // (Claude Code pattern). Mutating tools run sequentially for safety.
@@ -734,7 +738,6 @@ export function createAgentEngine(dependencies: {
                 }
 
                 dependencies.store.settleCapabilityCall(runId, call.callId, result.ok ? "succeeded" : "failed", Date.now());
-                if (!result.ok) capabilityFailure = true;
                                 emit(request.threadId, { type: "tool.result", runId, callId: call.callId, result });
                 if (request.hooks) {
                   void request.hooks.run("post_tool_use", { runId, threadId: request.threadId, botId: request.botId, capabilityId: call.capabilityId, callId: call.callId, arguments: call.arguments, result: { ok: result.ok, content: result.content } });

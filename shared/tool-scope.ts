@@ -22,7 +22,7 @@ function validName(name: unknown): name is string {
     && !name.includes("*");
 }
 
-function selectorIdentity(selector: string): ToolIdentity | undefined {
+export function selectorIdentity(selector: string): ToolIdentity | undefined {
   if (selector.length > MAX_SELECTOR_LENGTH || CONTROL_CHARACTER.test(selector)) return;
   if (selector.startsWith("native:")) {
     const name = selector.slice(7);
