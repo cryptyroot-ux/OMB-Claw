@@ -152,6 +152,18 @@ export interface CapabilitySession {
   close(): Promise<void>;
 }
 
+/** A provider of capabilities (MCP server, native tool, skill, browser/computer, data connector).
+ *  One lifecycle: mount → invoke → close, governed by a single grant/policy. */
+export interface CapabilityProvider {
+  readonly id: CapabilityId;
+  readonly kind: "mcp" | "native-tool" | "skill" | "browser" | "computer" | "data";
+  list(grant: CapabilityGrant): ReadonlyArray<CapabilityDescriptor>;
+  mount(context: { readonly grant: CapabilityGrant; readonly signal: AbortSignal }): Promise<void>;
+  invoke(call: CapabilityCall, context: { readonly grant: CapabilityGrant; readonly signal: AbortSignal }): Promise<CapabilityResult>;
+  close(): Promise<void>;
+  describe(): string;
+}
+
 export type AgentRunStatus = "queued" | "running" | "waiting" | "completed" | "failed" | "interrupted" | "recovery_required";
 export type CapabilityCallStatus = "dispatching" | "succeeded" | "failed" | "recovery_required";
 
