@@ -123,12 +123,18 @@ Verification: typecheck OK; agent-runtime 11 files / 67 tests; openai-chat 5 fil
 native-only + openai-tools 4 tests; native-ui 1 test; lint OK. Commits: `11818f313` (facade) on top of
 `7b85cb39e` (docs) on top of `c2607d28d` (capability routing).
 
-Phase 1b step 3 (remaining): move admission, `mountChatTools`, `createChatToolApproval`, and the native
-branch body out of `openai-chat.ts` into the runtime. This requires lifting shared turn state
-(`active`, `listeners`, `emit`, `base`, `complete`, `messagesFor`, `sessionGrants`) from the driver into
-the runtime (F8). It is a larger, mechanical move and is intentionally NOT done in the facade slice to
-avoid a big-bang breakage; it is the next dedicated sub-slice. Step 4 (retire the legacy driver loop for
-API drivers) follows after step 3 is green.
+Phase 1b step 3 (done, commit `6fc9dfc7d`): the entire turn cycle — shared state (`active`,
+`listeners`, `emit`, `base`, `complete`, `messagesFor`, `sessionGrants`, `delivered`,
+`reasoningReplayRejected`), admission, `mountChatTools`, `createChatToolApproval`, the native branch,
+and the legacy loop — now lives in `server/agent-runtime/native-turn-runtime.ts`
+(`createNativeTurnRuntime`). `server/drivers/openai-chat.ts` is a re-export shim. The driver is now a
+model gateway only; no turn-cycle code remains in `server/drivers`. Verification: typecheck OK; lint OK;
+agent-runtime 11 files / 67 tests; openai-chat shim 5 files / 207 tests; chat-size-limit; native-only +
+openai-tools 4 tests; native-ui 1 test.
+
+Phase 1b step 4 (next): retire the legacy driver loop from the default path for API drivers (it now
+lives in the runtime; remove it once the native path is the only path and the suite is green). Phase 2
+(provider/model adapters + capability detection) follows.
 
 Acceptance: `rg "nativeEngine.run" server/drivers` returns no driver-owned call; only `TurnRuntime`
 invokes the engine. `server/index.ts` calls `TurnRuntime`, not `ProviderAdapter.sendTurn`.
