@@ -185,9 +185,17 @@ interface PendingToolCall {
   args: string;
 }
 
+function slotOf(pending: Map<number, PendingToolCall>, id: string | undefined): number | undefined {
+  if (typeof id !== "string" || !id) return undefined;
+  for (const [slot, call] of pending) if (call.id === id) return slot;
+  return pending.size ? Math.max(...pending.keys()) + 1 : 0;
+}
+
 function addFragments(pending: Map<number, PendingToolCall>, fragments: ChatToolCall[] | undefined): void {
   for (const fragment of fragments ?? []) {
-    const index = fragment.index ?? 0;
+    // Gemini's OpenAI-compatible endpoint streams each call whole, with an id and no index.
+    const index = fragment.index ?? slotOf(pending, fragment.id);
+    if (index === undefined || !Number.isInteger(index) || index < 0) return;
     const current = pending.get(index) ?? { id: "", name: "", args: "" };
     if (fragment.id) current.id = fragment.id;
     if (fragment.function?.name) current.name += fragment.function.name;
