@@ -3,6 +3,7 @@ import { AntigravityDriver } from "./antigravity.ts";
 import { ClaudeDriver } from "./claude.ts";
 import { CodexDriver } from "./codex.ts";
 import { GrokDriver } from "./grok.ts";
+import { GeminiDriver } from "./gemini.ts";
 import { AnthropicDriver } from "./anthropic.ts";
 import { GrokAgentDriver } from "./acp/grok.ts";
 import { GeminiAgentDriver } from "./acp/gemini.ts";
@@ -26,6 +27,7 @@ import { MinimaxDriver } from "./minimax.ts";
 
 export const BUILT_IN_DRIVERS: readonly AnyProviderDriver[] = [
   GrokDriver,
+  GeminiDriver,
   AnthropicDriver,
   GrokAgentDriver,
   GeminiAgentDriver,
