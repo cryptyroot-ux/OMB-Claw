@@ -60,6 +60,7 @@ export const AnthropicDriver: ProviderDriver<AnthropicConfig> = {
       catalog: () => MODELS,
       toolsEnabled: config.tools !== false && String(config.tools) !== "false",
       imageInput: () => true,
+      httpErrorLabel: "Anthropic",
       modelAdapter,
     });
     return createOpenAIChatRuntime({

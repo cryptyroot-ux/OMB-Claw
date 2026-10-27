@@ -169,7 +169,7 @@ export function createGeminiModelAdapter(config: GeminiModelAdapterConfig): Mode
           const transient = response.status === 408 || response.status === 429 || response.status >= 500;
           if (rejectsKey(response.status, detail)) noteKeyRejected(config.apiUrl, config.apiKey);
           const code: ModelAdapterErrorCode = transient ? "transient" : response.status === 400 || response.status === 422 ? "invalid_request" : "terminal";
-          throw new GeminiAdapterError(`Gemini returned HTTP ${response.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`, code, transient, transient && !emitted, emitted);
+          throw new GeminiAdapterError(`Gemini returned HTTP ${response.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`, code, false, false, emitted);
         }
 
         if (!stream) {

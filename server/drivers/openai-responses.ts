@@ -59,6 +59,7 @@ export const OpenAIResponsesDriver: ProviderDriver<OpenAIResponsesConfig> = {
       catalog: () => MODELS,
       toolsEnabled: config.tools !== false && String(config.tools) !== "false",
       imageInput: () => true,
+      httpErrorLabel: "OpenAI",
       modelAdapter,
     });
     return createOpenAIChatRuntime({

@@ -14,6 +14,7 @@ export interface NativeChatEngineOptions {
   readonly apiKey: string;
   readonly catalog: () => ModelCatalog;
   readonly reasoning?: boolean;
+  readonly httpErrorLabel?: string;
   /** `config.tools === false` keeps tools unmounted; the model must not then be told it can call them. */
   readonly toolsEnabled?: boolean;
   readonly imageInput?: (modelId: string) => boolean;
@@ -29,6 +30,7 @@ export function createNativeChatEngine(options: NativeChatEngineOptions): AgentE
     apiKey: options.apiKey,
     catalog: options.catalog,
     reasoning: options.reasoning ?? false,
+    httpErrorLabel: options.httpErrorLabel,
     capabilities: (modelId): ModelCapabilities => probeCapabilities(modelId, options.catalog, {
       toolsEnabled: options.toolsEnabled,
       imageInput: options.imageInput,

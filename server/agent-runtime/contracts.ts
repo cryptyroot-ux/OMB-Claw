@@ -232,7 +232,7 @@ export type AgentEvent =
   | { readonly type: "tool.calls"; readonly runId: RunId; readonly calls: ReadonlyArray<ModelToolCall> }
   | { readonly type: "tool.result"; readonly runId: RunId; readonly callId: CapabilityCallId; readonly result: CapabilityResult }
   | { readonly type: "turn.completed"; readonly runId: RunId; readonly ok: boolean; readonly stopReason: string | null }
-  | { readonly type: "run.failed"; readonly runId: RunId; readonly message: string }
+  | { readonly type: "run.failed"; readonly runId: RunId; readonly message: string; readonly code?: string }
   | { readonly type: "run.interrupted"; readonly runId: RunId }
   | { readonly type: "run.compacted"; readonly runId: RunId; readonly summary: string; readonly firstKeptIndex: number; readonly tokenEstimate: number; readonly trigger: "auto" | "overflow" }
   | { readonly type: "run.recovery_required"; readonly runId: RunId; readonly callId: CapabilityCallId }

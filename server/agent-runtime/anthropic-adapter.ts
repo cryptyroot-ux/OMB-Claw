@@ -210,7 +210,7 @@ export function createAnthropicModelAdapter(config: AnthropicModelAdapterConfig)
           const code: ModelAdapterErrorCode = transient ? "transient" : response.status === 400 || response.status === 422 ? "invalid_request" : "terminal";
           throw new AnthropicAdapterError(
             `Anthropic returned HTTP ${response.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`,
-            code, transient, transient && !emitted, emitted,
+            code, false, false, emitted,
           );
         }
 

@@ -85,6 +85,7 @@ export const CerebrasDriver: ProviderDriver<CerebrasConfig> = {
     const nativeAgentEngine = createNativeChatEngine({
       providerId: "cerebras", apiUrl: config.url, apiKey, catalog: () => catalog, reasoning: true,
       toolsEnabled: config.tools !== false && String(config.tools) !== "false", imageInput: (model) => !TEXT_ONLY_MODELS.test(model),
+      httpErrorLabel: "Cerebras",
     });
     return createOpenAIChatRuntime({
       input, driverKind: "cerebras", apiKey, apiUrl: config.url,

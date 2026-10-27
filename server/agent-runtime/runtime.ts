@@ -796,13 +796,13 @@ export function createAgentEngine(dependencies: {
           emit(request.threadId, { type: "run.interrupted", runId });
         } else if (failure) {
           updateStatus("failed", errorCode(failure));
-          emit(request.threadId, { type: "run.failed", runId, message: safeMessage(failure) });
+          emit(request.threadId, { type: "run.failed", runId, message: safeMessage(failure), code: isModelAdapterError(failure) ? failure.code : errorCode(failure) });
         } else if (completed) {
           updateStatus("completed");
           emit(request.threadId, { type: "turn.completed", runId, ok: true, stopReason });
         } else {
           updateStatus("failed", "terminal");
-          emit(request.threadId, { type: "run.failed", runId, message: "The run ended without a final answer" });
+          emit(request.threadId, { type: "run.failed", runId, message: "The run ended without a final answer", code: "terminal" });
         }
       }).finally(() => {
         active.delete(runId);

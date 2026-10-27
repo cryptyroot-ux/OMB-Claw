@@ -59,6 +59,7 @@ export const GeminiDriver: ProviderDriver<GeminiConfig> = {
       catalog: () => MODELS,
       toolsEnabled: config.tools !== false && String(config.tools) !== "false",
       imageInput: () => true,
+      httpErrorLabel: "Gemini",
       modelAdapter,
     });
     return createOpenAIChatRuntime({

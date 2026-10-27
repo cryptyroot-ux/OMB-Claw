@@ -21,6 +21,7 @@ export interface OpenAICompatibleModelAdapterConfig {
   catalog: ModelCatalog | (() => ModelCatalog);
   capabilities: (modelId: string) => ModelCapabilities;
   fetcher?: typeof fetch;
+  httpErrorLabel?: string;
   timeoutMs?: number;
   reasoning?: boolean;
 }
@@ -217,6 +218,34 @@ function finalizeToolCalls(pending: Map<number, PendingToolCall>, requestStarted
  * OpenAI-compatible Chat Completions transport. This adapter owns wire format
  * only: no capability execution, no run state, and no credentials in logs.
  */
+
+function httpErrorDetail(body: string, limit = 500): string {
+  let json: Record<string, unknown> | undefined;
+  try { json = JSON.parse(body) as Record<string, unknown>; } catch { json = undefined; }
+  let message: string | null = null;
+  if (json) {
+    if (typeof json.error === "string") message = json.error;
+    else {
+      const err = (json.error && typeof json.error === "object") ? json.error as Record<string, unknown> : null;
+      if (err) message = typeof err.message === "string" ? err.message : "unknown error";
+      else {
+        const code = (json.base_resp as Record<string, unknown> | undefined)?.status_code;
+        if (typeof code === "number" && code !== 0) {
+          const msg = (json.base_resp as Record<string, unknown> | undefined)?.status_msg;
+          message = `upstream error ${code}${typeof msg === "string" && msg ? `: ${msg}` : ""}`;
+        } else {
+          message = null;
+        }
+      }
+    }
+  }
+  if (!message || message === "unknown error") return body.slice(0, limit);
+  const errObj = (json?.error && typeof json.error === "object") ? json.error as Record<string, unknown> : null;
+  const code = errObj?.code;
+  const suffix = typeof code === "string" && /^[a-z][a-z0-9_]*$/.test(code) ? ` (${code})` : "";
+  return (message.slice(0, limit) + suffix);
+}
+
 export function createOpenAICompatibleModelAdapter(config: OpenAICompatibleModelAdapterConfig): ModelAdapter {
   const resolveFetcher = () => config.fetcher ?? fetch;
 
@@ -291,15 +320,16 @@ export function createOpenAICompatibleModelAdapter(config: OpenAICompatibleModel
                 : response.status === 400 || response.status === 422
                   ? "invalid_request"
                   : "terminal";
+          const label = config.httpErrorLabel ?? "Model provider";
           throw new OpenAICompatibleAdapterError(
             toolsRejected
               ? "The model provider does not support tools"
               : tooLarge
                 ? "The model request exceeded the provider's size limit"
-                : `Model provider returned HTTP ${response.status}`,
+                : `${label} HTTP ${response.status}${detail ? `: ${httpErrorDetail(detail)}` : ""}`,
             code,
-            transient,
-            transient && !emitted,
+            false,  // HTTP errors are not retried (legacy path treats them as ChatProtocolError)
+            false,
             emitted,
             tooLarge ? Buffer.byteLength(payload) : undefined,
           );

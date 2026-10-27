@@ -183,9 +183,13 @@ export async function runNativeTurn(context: NativeTurnContext): Promise<void> {
         case "turn.completed":
           finish(event.ok, event.stopReason ?? null);
           break;
-        case "run.failed":
-          finish(false, "error", event.message);
+        case "run.failed": {
+          const stopReason = event.code === "capability_failed" ? "tool_error"
+            : event.code === "incomplete_action" ? "incomplete_action"
+            : "error";
+          finish(false, stopReason, event.message);
           break;
+        }
         case "run.interrupted":
           finish(false, "interrupted");
           break;

@@ -102,6 +102,7 @@ export const MetaDriver: ProviderDriver<MetaConfig> = {
     const nativeAgentEngine = createNativeChatEngine({
       providerId: "meta", apiUrl: config.url, apiKey, catalog: () => catalog, reasoning: true,
       toolsEnabled: config.tools !== false && String(config.tools) !== "false", imageInput: (model) => /^muse-/i.test(model),
+      httpErrorLabel: "Meta",
     });
     return createOpenAIChatRuntime({
       input, driverKind: "meta", apiKey, apiUrl: config.url,

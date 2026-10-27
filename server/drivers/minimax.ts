@@ -106,6 +106,7 @@ export const MinimaxDriver: ProviderDriver<MinimaxConfig> = {
     const nativeAgentEngine = createNativeChatEngine({
       providerId: DRIVER_KIND, apiUrl, apiKey, catalog: () => models, reasoning: true,
       toolsEnabled: input.config.tools !== false && String(input.config.tools) !== "false", imageInput: () => true,
+      httpErrorLabel: "MiniMax",
     });
     return createOpenAIChatRuntime({
       input,
