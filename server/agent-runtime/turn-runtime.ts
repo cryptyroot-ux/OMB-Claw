@@ -123,14 +123,16 @@ export async function runNativeTurn(context: NativeTurnContext): Promise<void> {
     };
     const mcpSession = createChatCapabilitySession({ session: tools, approval });
     const fileRoot = turn.botId ? workspaceDir(turn.botId) : process.cwd();
-    const providers = [
+    const providers: any[] = [
       new SessionCapabilityProvider("mcp", "mcp", mcpSession, "MCP tools"),
-      new NativeFileCapabilityProvider({ root: fileRoot }),
-      new NativeShellCapabilityProvider({ root: fileRoot }),
-      new NativeGitCapabilityProvider({ root: fileRoot }),
-      new NativeWebCapabilityProvider({ root: fileRoot }),
-      new SkillCapabilityProvider(turn.botId ?? "", undefined),
     ];
+    if (context.toolsEnabled) {
+      providers.push(new NativeFileCapabilityProvider({ root: fileRoot }, scope));
+      providers.push(new NativeShellCapabilityProvider({ root: fileRoot }, scope));
+      providers.push(new NativeGitCapabilityProvider({ root: fileRoot }, scope));
+      providers.push(new NativeWebCapabilityProvider({ root: fileRoot }, scope));
+    }
+    providers.push(new SkillCapabilityProvider(turn.botId ?? "", undefined));
     const composite = new CompositeCapabilityRuntime(providers);
     await composite.mountAll({ grant, signal: abort.signal });
     capabilitySession = composite;
