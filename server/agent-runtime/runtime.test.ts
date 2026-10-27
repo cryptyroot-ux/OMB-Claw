@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createAgentEngine } from "./runtime.ts";
+import { compactionKeepTokens, createAgentEngine } from "./runtime.ts";
 import type {
   AgentEvent,
   AgentCompactionRecord,
@@ -1085,4 +1085,14 @@ describe("createAgentEngine", () => {
     expect(nudgeIndex).toBeGreaterThan(0);
     expect(nudged[nudgeIndex - 1]).toEqual({ role: "assistant", content: "Let me check the fixture." });
   });
+
+
+describe("compactionKeepTokens", () => {
+  it("is proportional to the context window and clamped", () => {
+    expect(compactionKeepTokens({ status: "unknown" })).toBe(32_000);
+    expect(compactionKeepTokens({ status: "known", value: 32_000 })).toBe(8_000);
+    expect(compactionKeepTokens({ status: "known", value: 128_000 })).toBe(32_000);
+    expect(compactionKeepTokens({ status: "known", value: 64_000 })).toBe(16_000);
+  });
+});
 });
