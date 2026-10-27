@@ -13194,6 +13194,22 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     if (method === "GET" && path === "/api/brand" && !gate.auth) {
       return json(res, 200, loadBrand());
     }
+    // Public: update check is read-only and needed before pairing.
+    if (method === "GET" && path === "/api/updates/check" && !gate.auth) {
+      const check = serverUpdateChecker({ desktopManaged: DESKTOP_MANAGED, managed: Boolean(CLOUD_HOME || HOSTED_WORKSPACE) });
+      try { return json(res, 200, await check()); } catch (e) { return json(res, 502, { error: `Could not check for updates: ${e instanceof Error ? e.message : String(e)}` }); }
+    }
+    // Public: auto-update trigger (self-hosted only).
+    if (method === "POST" && path === "/api/updates/apply" && !gate.auth) {
+      try {
+        const { spawn } = await import("node:child_process");
+        const child = spawn("bash", ["-c", "cd /root/OMB-Claw && git pull && pnpm install && pnpm build && systemctl restart omb-claw.service"], { detached: true, stdio: "ignore" });
+        child.unref();
+        return json(res, 200, { ok: true, message: "Update started in background. Service will restart shortly." });
+      } catch (e) {
+        return json(res, 500, { error: `Update failed: ${e instanceof Error ? e.message : String(e)}` });
+      }
+    }
     if (!gate.auth) return json(res, gate.status, { error: gate.error });
     if (cloudPower && gate.auth.kind === "session") cloudPower.request(path, req.headers, res); // someone using a Cloud home keeps it awake
     const auth = gate.auth;
