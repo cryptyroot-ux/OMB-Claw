@@ -114,9 +114,10 @@ class AskUserCapabilityProvider implements CapabilityProvider {
     const answer = await this.approval.question(ASK_USER_TOOL, askQuestionSummary(questions), questions);
     context.signal.throwIfAborted();
     
+    const answered = answer !== null;
     return {
       callId: call.callId,
-      ok: true,
+      ok: answered,
       content: answer ?? "The person did not answer this question. Do not guess an answer; ask again later or proceed without it."
     };
   }
@@ -146,7 +147,7 @@ export async function runNativeTurn(context: NativeTurnContext): Promise<void> {
       context.emit({
         ...context.base(turn.threadId, turnId),
         type: "runtime.error",
-        message: context.safeText(plainFailureMessage(context.httpErrorLabel === "upstream" ? "upstream" : context.httpErrorLabel, failure)).slice(0, 2_000),
+        message: context.safeText(context.httpErrorLabel === "upstream" ? String(failure) : plainFailureMessage(context.httpErrorLabel, failure)).slice(0, 2_000),
         terminal: !abort.signal.aborted,
       });
     }
@@ -310,6 +311,9 @@ export async function runNativeTurn(context: NativeTurnContext): Promise<void> {
           break;
         case "run.compacted":
           context.emit({ ...context.base(turn.threadId, turnId), type: "runtime.notice", message: `Older context was summarized to fit the model window (${event.tokenEstimate} estimated tokens after compaction).` });
+          break;
+        case "turn.retrying":
+          context.emit({ ...context.base(turn.threadId, turnId), type: "turn.retrying", attempt: event.attempt, delayMs: event.delayMs, reason: event.reason });
           break;
         case "run.started":
           break;

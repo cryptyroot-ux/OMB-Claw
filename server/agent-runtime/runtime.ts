@@ -6,6 +6,7 @@ import { workspaceDir } from "../workspace.ts";
 import { parseToolScope, allowsTool } from "../../shared/tool-scope.ts";
 import { snapshot as createCheckpoint } from "../checkpoints.ts";
 import { createRunScopedCapabilitySession, TOOL_OUTPUT_READ_CAPABILITY } from "./capability-runtime.ts";
+import { appendNative } from "../drivers/native.ts";
 import type {
   AgentEngine,
   AgentEvent,
@@ -41,10 +42,21 @@ class AgentRuntimeError extends Error {
 function isModelAdapterError(error: unknown): error is ModelAdapterError {
   if (!(error instanceof Error)) return false;
   const candidate = error as ModelAdapterError;
-  return ["transient", "unsupported_capability", "unsupported_tools", "request_too_large", "invalid_request", "terminal"].includes(candidate.code)
+  return ["transient", "unsupported_capability", "unsupported_tools", "request_too_large", "invalid_request", "tool_use_failed", "terminal"].includes(candidate.code)
     && typeof candidate.retryable === "boolean"
     && typeof candidate.retrySafe === "boolean"
     && typeof candidate.requestStarted === "boolean";
+}
+
+/** Formats a Groq-style `tool_use_failed` refusal into a user-facing message (mirrors native-turn-runtime.ts). */
+function refusedToolCallFailure(refusal: Record<string, unknown> | undefined, earlierSteps: boolean): string {
+  const words = refusal && typeof refusal.message === "string" ? refusal.message : "";
+  const tool = /attempted to call tool '([^']+)'/.exec(words)?.[1];
+  const what = tool ? `tried to use a tool it was not given ("${tool}")` : "made a tool call the provider rejected";
+  const next = earlierSteps
+    ? "The steps before it already ran, so ask only for what's left."
+    : "Nothing ran. Retry; if it keeps happening, rephrase the request or choose another model.";
+  return `The model ${what}. ${next} Provider: ${words.slice(0, 200)}`;
 }
 
 function errorCode(error: unknown): string {
@@ -236,6 +248,8 @@ export function createAgentEngine(dependencies: {
         let outputVisible = false;
         let capabilityDispatched = false;
         let capabilityFailure = false;
+        let capabilityFailureThisRound = false;
+        let capabilityFailureSinceCorrective = false;
         let completed = false;
         let stopReason: string | null = null;
         let failure: unknown;
@@ -292,6 +306,7 @@ export function createAgentEngine(dependencies: {
           const precomputeTrigger = Math.floor(budget.trigger * 0.7);
           let precomputed: { readonly summary: string; readonly cut: number; readonly messageCount: number; readonly model: string } | null = null;
           let overflowRejected = false;
+          let refusalCount = 0;
 
           const firePrecompute = (): void => {
             if (precomputed || overflowRejected) return;
@@ -388,7 +403,7 @@ export function createAgentEngine(dependencies: {
           while (modelRounds < MAX_MODEL_ROUNDS) {
             signal.throwIfAborted();
             if (control.steers.length) {
-              for (const text of control.steers.splice(0)) messages.push({ role: "user", content: text });
+              messages.push({ role: "user", content: control.steers.splice(0).join("\n\n") });
               precomputed = null;
             }
             if (runBudget?.maxWallTimeMs && Date.now() - runStartedAt > runBudget.maxWallTimeMs) {
@@ -553,6 +568,23 @@ export function createAgentEngine(dependencies: {
                     continue;
                   }
                 }
+                if (
+                  isModelAdapterError(error)
+                  && error.code === "tool_use_failed"
+                ) {
+                  const refusal = (error as ModelAdapterError).refusal;
+                  appendNative(request.threadId, {
+                    dir: "in",
+                    source: "native-agent-engine",
+                    msg: { refused: "tool_use_failed", attempt: refusalCount + 1, error: refusal },
+                  });
+                  if (!outputVisible && !signal.aborted && refusalCount < RETRY_MAX_ATTEMPTS - 1) {
+                    refusalCount++;
+                    emit(request.threadId, { type: "turn.retrying", runId, attempt: refusalCount, delayMs: 0, reason: "tool_use_failed" });
+                    continue;
+                  }
+                  throw new AgentRuntimeError("tool_use_failed", refusedToolCallFailure(refusal, responseCalls.length > 0));
+                }
                 const canRetry = isModelAdapterError(error)
                   && error.code === "transient"
                   && error.retryable
@@ -586,9 +618,12 @@ export function createAgentEngine(dependencies: {
               if (toolCalls + responseCalls.length > MAX_TOOL_CALLS) throw new AgentRuntimeError("tool_budget_exceeded", `Stopped after ${MAX_TOOL_CALLS} tool calls`);
 
               const batch: Array<{ readonly call: CapabilityCall; readonly descriptor: (typeof toolDescriptors)[number] }> = [];
-              // Reset capability failure for this new batch of tool calls;
-              // it will be re-set to true if any call in this batch fails or is excluded.
-              capabilityFailure = false;
+              // Reset per-round failure tracking for this new batch of tool calls.
+              // capabilityFailure itself persists across batches so a later success
+              // cannot clear an earlier failure — unless a corrective round was
+              // already used AND no new failure has occurred since then.
+              capabilityFailureThisRound = false;
+              if (correctiveRounds > 0 && !capabilityFailureSinceCorrective) capabilityFailure = false;
               for (const modelCall of responseCalls) {
                 if (!modelCall.id.trim() || seenCallIds.has(modelCall.id)) throw new AgentRuntimeError("invalid_tool_call", "The model reused or omitted a tool-call ID");
                 seenCallIds.add(modelCall.id);
@@ -605,6 +640,7 @@ export function createAgentEngine(dependencies: {
                   emit(request.threadId, { type: "tool.result", runId, callId: modelCall.id, result: { callId: modelCall.id, ok: false, content: msg, error: "not_found" } });
                   messages.push({ role: "tool", content: JSON.stringify({ ok: false, result: msg }), toolCallId: modelCall.id });
                   capabilityFailure = true;
+                  capabilityFailureThisRound = true;
                   continue;
                 }
                 batch.push({
@@ -739,6 +775,7 @@ export function createAgentEngine(dependencies: {
 
                 dependencies.store.settleCapabilityCall(runId, call.callId, result.ok ? "succeeded" : "failed", Date.now());
                                 emit(request.threadId, { type: "tool.result", runId, callId: call.callId, result });
+                if (!result.ok) { capabilityFailure = true; if (call.capabilityId !== "ask_user") capabilityFailureThisRound = true; if (correctiveRounds > 0) capabilityFailureSinceCorrective = true; }
                 if (request.hooks) {
                   void request.hooks.run("post_tool_use", { runId, threadId: request.threadId, botId: request.botId, capabilityId: call.capabilityId, callId: call.callId, arguments: call.arguments, result: { ok: result.ok, content: result.content } });
                 }
@@ -778,16 +815,19 @@ export function createAgentEngine(dependencies: {
               continue;
             }
             control.finishing = true;
-            if (capabilityFailure) {
+            if (capabilityFailureThisRound) {
               const maxCorrective = request.toolErrorCorrectiveRounds ?? 0;
               if (correctiveRounds < maxCorrective) {
                 correctiveRounds += 1;
+                capabilityFailureSinceCorrective = false;
                 messages.push({ role: "assistant", content: responseText || "" }, { role: "user", content: "[OpenMausBot: a tool call in this turn failed (its result is marked ok:false). Re-run the failed operations with corrected inputs where possible, check the results, then give your final answer. Do not report results you did not get.]" });
                 precomputed = null;
                 continue;
               }
             }
-            if (capabilityFailure) throw new AgentRuntimeError("capability_failed", "One or more capabilities failed or were denied; the run is not a success receipt");
+            if (capabilityFailure) {
+              throw new AgentRuntimeError("capability_failed", "One or more tool operations failed or were denied. See the tool results; the final response is not an execution receipt.");
+            }
             if (request.nudgeAnnouncedAction && toolDescriptors.length > 0 && announcesAction(responseText)) {
               if (nudges >= MAX_ANNOUNCEMENT_NUDGES) {
                 throw new AgentRuntimeError("incomplete_action", `Stopped after ${MAX_ANNOUNCEMENT_NUDGES} announcement nudges without a verified final answer. Earlier operations may have taken effect; inspect their state and continue only the remaining work.`);

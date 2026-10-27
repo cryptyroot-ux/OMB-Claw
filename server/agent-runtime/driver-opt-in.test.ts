@@ -51,7 +51,7 @@ function waitForCompleted(instance: { onEvent(listener: (event: RuntimeEvent) =>
 }
 
 describe("OpenAI-compatible native opt-in", () => {
-  it("runs an allowlisted native turn through a real MCP tool, then keeps legacy turns legacy", async () => {
+  it("runs an allowlisted native turn through a real MCP tool, then a second native turn without tools", async () => {
     const mcp = await startFakeHttpMcp({
       tools: [{ name: "echo", description: "Echo a value", inputSchema: { type: "object", properties: { value: { type: "string" } }, required: ["value"] } }],
       callResult: (params) => {
@@ -101,6 +101,7 @@ describe("OpenAI-compatible native opt-in", () => {
       await instance.adapter.sendTurn({
         threadId: "thread-legacy",
         botId: "bot-legacy",
+        agentEngine: "omb-native",
         text: "Answer without the native engine.",
         model: "fixture-model",
         approvalMode: "full",
@@ -112,7 +113,10 @@ describe("OpenAI-compatible native opt-in", () => {
       const db = new DatabaseSync(join(DATA_DIR, "messages.db"));
       const runs = db.prepare("SELECT status, model_rounds, tool_calls FROM agent_runs").all() as Array<{ status: string; model_rounds: number; tool_calls: number }>;
       db.close();
-      expect(runs).toEqual([{ status: "completed", model_rounds: 2, tool_calls: 1 }]);
+      expect(runs).toEqual([
+        { status: "completed", model_rounds: 2, tool_calls: 1 },
+        { status: "completed", model_rounds: 1, tool_calls: 0 },
+      ]);
     } finally {
       await instance.dispose();
       mcp.close();

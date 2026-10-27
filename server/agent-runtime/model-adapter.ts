@@ -12,7 +12,7 @@ import type {
 } from "./contracts.ts";
 import { rejectsToolsParameter } from "../tool-rejection.ts";
 import { refusesRequestSize } from "../request-size.ts";
-import { rejectsKey, noteKeyRejected } from "../key-rejections.ts";
+import { rejectsKey, noteKeyRejected, noteKeyAccepted } from "../key-rejections.ts";
 
 export interface OpenAICompatibleModelAdapterConfig {
   providerId: string;
@@ -59,6 +59,7 @@ interface ChatResponse {
   choices?: ChatChoice[];
   usage?: ChatUsage;
   error?: unknown;
+  base_resp?: { status_code?: number; status_msg?: string };
 }
 
 class OpenAICompatibleAdapterError extends Error implements ModelAdapterError {
@@ -67,6 +68,8 @@ class OpenAICompatibleAdapterError extends Error implements ModelAdapterError {
   readonly retrySafe: boolean;
   readonly requestStarted: boolean;
   readonly bytes?: number;
+  /** Present for `tool_use_failed`: the provider's refusal envelope. */
+  readonly refusal?: Record<string, unknown>;
 
   constructor(
     message: string,
@@ -75,6 +78,7 @@ class OpenAICompatibleAdapterError extends Error implements ModelAdapterError {
     retrySafe: boolean,
     requestStarted: boolean,
     bytes?: number,
+    refusal?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "OpenAICompatibleAdapterError";
@@ -83,11 +87,24 @@ class OpenAICompatibleAdapterError extends Error implements ModelAdapterError {
     this.retrySafe = retrySafe;
     this.requestStarted = requestStarted;
     this.bytes = bytes;
+    this.refusal = refusal;
   }
 }
 
 function protocolError(message: string, requestStarted: boolean): OpenAICompatibleAdapterError {
   return new OpenAICompatibleAdapterError(message, "terminal", false, false, requestStarted);
+}
+
+/** Extracts a Groq-style `tool_use_failed` refusal envelope from an error object, if present. */
+function extractToolUseFailed(envelope: { error?: unknown; base_resp?: unknown }): { code: string; message?: string } | undefined {
+  const err = envelope.error;
+  if (err && typeof err === "object" && !Array.isArray(err)) {
+    const record = err as Record<string, unknown>;
+    if (record.code === "tool_use_failed") {
+      return { code: "tool_use_failed", message: typeof record.message === "string" ? record.message : undefined };
+    }
+  }
+  return undefined;
 }
 
 function abortError(reason: unknown): DOMException {
@@ -312,15 +329,23 @@ export function createOpenAICompatibleModelAdapter(config: OpenAICompatibleModel
           const toolsRejected = !transient && rejectsToolsParameter(response.status, detail);
           const tooLarge = !transient && !toolsRejected && refusesRequestSize(response.status, detail);
           if (rejectsKey(response.status, detail)) noteKeyRejected(config.apiUrl, config.apiKey);
+          const toolUseFailed = !transient && !toolsRejected && !tooLarge && (() => {
+            try {
+              const err = JSON.parse(detail).error;
+              return err && typeof err === "object" && err.code === "tool_use_failed";
+            } catch { return false; }
+          })();
           const code: ModelAdapterErrorCode = toolsRejected
             ? "unsupported_tools"
             : tooLarge
               ? "request_too_large"
-              : transient
-                ? "transient"
-                : response.status === 400 || response.status === 422
-                  ? "invalid_request"
-                  : "terminal";
+              : toolUseFailed
+                ? "tool_use_failed"
+                : transient
+                  ? "transient"
+                  : response.status === 400 || response.status === 422
+                    ? "invalid_request"
+                    : "terminal";
           const label = config.httpErrorLabel ?? "Model provider";
           throw new OpenAICompatibleAdapterError(
             toolsRejected
@@ -336,6 +361,8 @@ export function createOpenAICompatibleModelAdapter(config: OpenAICompatibleModel
           );
         }
 
+        noteKeyAccepted(config.apiUrl, config.apiKey);
+
         const contentType = response.headers.get("content-type") ?? "";
         if (!stream || contentType.includes("application/json")) {
           let completion: ChatResponse;
@@ -345,7 +372,11 @@ export function createOpenAICompatibleModelAdapter(config: OpenAICompatibleModel
             throw protocolError("The model returned an unreadable JSON response", emitted);
           }
           const message = completion.choices?.[0]?.message;
-          if (!message) throw protocolError("The model returned no completion message", emitted);
+          if (!message) {
+            // HTTP 200 dengan body error JSON (MiniMax base_resp, OpenAI error envelope, dll.)
+            // tanpa choices: surfacen detail error sebagai protocol error alih-ngaba "no completion message".
+            throw protocolError(`The model returned a completion error: ${httpErrorDetail(JSON.stringify(completion))}`, emitted);
+          }
           if (typeof message.content === "string" && message.content) {
             emitted = true;
             yield { type: "content.delta", kind: "assistant_text", delta: message.content };
@@ -387,6 +418,7 @@ export function createOpenAICompatibleModelAdapter(config: OpenAICompatibleModel
               const data = line.slice(5).trim();
               if (data === "[DONE]") {
                 done = true;
+                if (finishReason === null) finishReason = "stop";
                 break;
               }
               let update: ChatResponse;
@@ -394,6 +426,23 @@ export function createOpenAICompatibleModelAdapter(config: OpenAICompatibleModel
                 update = JSON.parse(data) as ChatResponse;
               } catch {
                 throw protocolError("The model stream contained an incomplete JSON frame", emitted);
+              }
+              // HTTP 200 dengan body error JSON (MiniMax base_resp, OpenAI error envelope, dll.)
+              // tanpa choices: surfacen detail error sebagai protocol error.
+              if (!update.choices && (update.error || update.base_resp)) {
+                const toolUseFailed = extractToolUseFailed(update);
+                if (toolUseFailed) {
+                  throw new OpenAICompatibleAdapterError(
+                    `The model tried to use a tool it was not given. Provider: ${typeof toolUseFailed.message === "string" ? toolUseFailed.message : httpErrorDetail(JSON.stringify(update))}`,
+                    "tool_use_failed",
+                    false,
+                    false,
+                    emitted,
+                    undefined,
+                    update.error as Record<string, unknown>,
+                  );
+                }
+                throw protocolError(`The model returned a completion error: ${httpErrorDetail(JSON.stringify(update))}`, emitted);
               }
               const usageUpdate = usageEvent(update.usage);
               if (usageUpdate) usage = usageUpdate;
@@ -421,28 +470,58 @@ export function createOpenAICompatibleModelAdapter(config: OpenAICompatibleModel
         if (buffer.trim().startsWith("data:")) {
           const tail = buffer.trim().slice(5).trim();
           if (tail !== "[DONE]") {
-            let update: ChatResponse;
+            try {
+              const update = JSON.parse(tail) as ChatResponse;
+              const usageUpdate = usageEvent(update.usage);
+              if (usageUpdate) usage = usageUpdate;
+              const choice = update.choices?.[0];
+              if (choice) {
+                sawChoice = true;
+                if (typeof choice.delta?.content === "string" && choice.delta.content) {
+                  emitted = true;
+                  yield { type: "content.delta", kind: "assistant_text", delta: choice.delta.content };
+                }
+                if (config.reasoning && choice.delta?.reasoning_content) {
+                  emitted = true;
+                  yield { type: "content.delta", kind: "reasoning_text", delta: choice.delta.reasoning_content };
+                }
+                addFragments(pending, choice.delta?.tool_calls);
+                if (choice.finish_reason) finishReason = choice.finish_reason;
+              }
+            } catch {
+              // Tail frame tidak lengkap dari stream yang terpotong; abaikan jika konten valid sudah terima.
+            }
+          }
+        }
+
+        // Non-SSE JSON body that arrived via the stream path (raw JSON error
+        // body with content-type text/event-stream but no data: prefix).
+        // Detect error envelopes (MiniMax base_resp, OpenAI error, etc.) and
+        // surface them instead of "no streaming choice".
+        if (!sawChoice) {
+          const tail = buffer.trim();
+          if (tail.startsWith("{")) {
+            let update: ChatResponse | undefined;
             try {
               update = JSON.parse(tail) as ChatResponse;
             } catch {
-              throw protocolError("The model stream ended with an incomplete JSON frame", emitted);
+              update = undefined;
             }
-            const usageUpdate = usageEvent(update.usage);
-            if (usageUpdate) usage = usageUpdate;
-            const choice = update.choices?.[0];
-            if (choice) {
-              sawChoice = true;
-              if (typeof choice.delta?.content === "string" && choice.delta.content) {
-                emitted = true;
-                yield { type: "content.delta", kind: "assistant_text", delta: choice.delta.content };
+            if (update && !update.choices && (update.error || update.base_resp)) {
+                const toolUseFailed = extractToolUseFailed(update);
+                if (toolUseFailed) {
+                  throw new OpenAICompatibleAdapterError(
+                    `The model tried to use a tool it was not given. Provider: ${typeof toolUseFailed.message === "string" ? toolUseFailed.message : httpErrorDetail(JSON.stringify(update))}`,
+                    "tool_use_failed",
+                    false,
+                    false,
+                    emitted,
+                    undefined,
+                    update.error as Record<string, unknown>,
+                  );
+                }
+                throw protocolError(`provider returned a completion error: ${httpErrorDetail(JSON.stringify(update))}`, emitted);
               }
-              if (config.reasoning && choice.delta?.reasoning_content) {
-                emitted = true;
-                yield { type: "content.delta", kind: "reasoning_text", delta: choice.delta.reasoning_content };
-              }
-              addFragments(pending, choice.delta?.tool_calls);
-              if (choice.finish_reason) finishReason = choice.finish_reason;
-            }
           }
         }
 

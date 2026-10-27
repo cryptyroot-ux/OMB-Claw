@@ -85,7 +85,7 @@ export type ModelEvent =
   | { readonly type: "usage"; readonly input: number; readonly output: number; readonly cachedInput?: number; readonly costUsd?: number }
   | { readonly type: "completed"; readonly finishReason: string | null };
 
-export type ModelAdapterErrorCode = "transient" | "unsupported_capability" | "unsupported_tools" | "request_too_large" | "invalid_request" | "terminal";
+export type ModelAdapterErrorCode = "transient" | "unsupported_capability" | "unsupported_tools" | "request_too_large" | "invalid_request" | "tool_use_failed" | "terminal";
 
 export interface ModelAdapterError extends Error {
   readonly code: ModelAdapterErrorCode;
@@ -94,6 +94,8 @@ export interface ModelAdapterError extends Error {
   readonly requestStarted: boolean;
   /** Present for `request_too_large`: the rejected request's encoded size. */
   readonly bytes?: number;
+  /** Present for `tool_use_failed`: the provider's refusal payload. */
+  readonly refusal?: Record<string, unknown>;
 }
 
 export interface ModelAdapter {
@@ -236,7 +238,8 @@ export type AgentEvent =
   | { readonly type: "run.interrupted"; readonly runId: RunId }
   | { readonly type: "run.compacted"; readonly runId: RunId; readonly summary: string; readonly firstKeptIndex: number; readonly tokenEstimate: number; readonly trigger: "auto" | "overflow" }
   | { readonly type: "run.recovery_required"; readonly runId: RunId; readonly callId: CapabilityCallId }
-  | { readonly type: "run.checkpoint_available"; readonly runId: RunId; readonly callId: CapabilityCallId; readonly checkpointHash: string };
+  | { readonly type: "run.checkpoint_available"; readonly runId: RunId; readonly callId: CapabilityCallId; readonly checkpointHash: string }
+  | { readonly type: "turn.retrying"; readonly runId: RunId; readonly attempt: number; readonly delayMs: number; readonly reason: string };
 
 export interface AgentRunRequest {
   readonly botId: BotId;

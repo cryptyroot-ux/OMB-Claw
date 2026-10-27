@@ -100,7 +100,9 @@ export function createChatCapabilitySession({
       assertOpen();
       assertPermitted(call.capabilityId, grant);
       if (call.capabilityId === ASK_USER_TOOL) {
-        if (!parseAskQuestions(call.arguments)) throw new Error("The ask_user arguments are malformed");
+        // Argument validity is enforced by invoke(); do not reject here so a
+        // malformed ask_user call is surfaced as a tool result (ok:false)
+        // rather than aborting the whole turn.
         return;
       }
       session.validate(call.capabilityId, call.arguments);
