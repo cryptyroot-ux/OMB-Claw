@@ -2,6 +2,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 
 const execFileAsync = promisify(execFile);
 const GIT_TIMEOUT_MS = 30_000;
@@ -118,6 +119,30 @@ export async function runGitTool(ctx: GitToolContext, args: Record<string, unkno
       if (r.code !== 0) return { ok: false, content: r.stderr, error: r.stderr };
       return { ok: true, content: r.stdout.trim() || "Initialized repository." };
     }
+    case "worktree-add": {
+      const path = String(args?.path ?? "").trim();
+      const branch = String(args?.branch ?? "").trim();
+      if (!path) return { ok: false, content: "", error: "path is required" };
+      const resolved = path.startsWith("/") ? path : join(cwd, path);
+      // safety: must be under workspace parent (sibling of repo)
+      const gitArgs = branch ? ["worktree", "add", resolved, "-b", branch] : ["worktree", "add", resolved];
+      const r = await runGit(gitArgs, cwd);
+      if (r.code !== 0) return { ok: false, content: r.stderr, error: r.stderr };
+      return { ok: true, content: r.stdout.trim() || `Worktree created at ${resolved}` };
+    }
+    case "worktree-remove": {
+      const path = String(args?.path ?? "").trim();
+      if (!path) return { ok: false, content: "", error: "path is required" };
+      const resolved = path.startsWith("/") ? path : join(cwd, path);
+      const r = await runGit(["worktree", "remove", resolved, "--force"], cwd);
+      if (r.code !== 0) return { ok: false, content: r.stderr, error: r.stderr };
+      return { ok: true, content: r.stdout.trim() || `Worktree removed: ${resolved}` };
+    }
+    case "worktree-list": {
+      const r = await runGit(["worktree", "list", "--porcelain"], cwd);
+      if (r.code !== 0) return { ok: false, content: r.stderr, error: r.stderr };
+      return { ok: true, content: r.stdout.trim() || "No worktrees." };
+    }
     default:
       return { ok: false, content: `Unknown operation: ${op}. Supported: status, diff, log, add, commit, branch, checkout, init`, error: `Unknown operation: ${op}` };
   }
@@ -126,7 +151,7 @@ export async function runGitTool(ctx: GitToolContext, args: Record<string, unkno
 export const GIT_TOOL_DESCRIPTOR = {
   id: "git",
   name: "git",
-  description: "Run git operations in the workspace: status, diff, log, add, commit, branch, checkout, init.",
+  description: "Run git operations in the workspace: status, diff, log, add, commit, branch, checkout, init, worktree-add, worktree-remove, worktree-list.",
   schema: {
     type: "object",
     properties: {
