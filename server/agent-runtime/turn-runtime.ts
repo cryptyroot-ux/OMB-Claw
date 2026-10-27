@@ -11,6 +11,7 @@ import { CompositeCapabilityRuntime, SessionCapabilityProvider, SkillCapabilityP
 import { NativeFileCapabilityProvider } from "./native-file-capability-provider.ts";
 import { NativeGitCapabilityProvider } from "./native-git-capability-provider.ts";
 import { NativeWebCapabilityProvider } from "./native-web-capability-provider.ts";
+import { ToolSearchCapabilityProvider } from "./tool-search-capability-provider.ts";
 import { NativeShellCapabilityProvider } from "./native-shell-capability-provider.ts";
 import { workspaceDir } from "../workspace.ts";
 import type { AgentEngine, CapabilityGrant, CapabilitySession } from "./contracts.ts";
@@ -131,6 +132,7 @@ export async function runNativeTurn(context: NativeTurnContext): Promise<void> {
       providers.push(new NativeShellCapabilityProvider({ root: fileRoot }));
       providers.push(new NativeGitCapabilityProvider({ root: fileRoot }));
       providers.push(new NativeWebCapabilityProvider({ root: fileRoot }));
+      providers.push(new ToolSearchCapabilityProvider(() => mcpSession));
     }
     providers.push(new SkillCapabilityProvider(turn.botId ?? "", undefined));
     const composite = new CompositeCapabilityRuntime(providers);
