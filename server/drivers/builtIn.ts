@@ -17,6 +17,7 @@ import { HermesAgentDriver } from "./acp/hermes.ts";
 import { DeepSeekAgentDriver } from "./acp/deepseek.ts";
 import { ClineAgentDriver } from "./acp/cline.ts";
 import { OpenAICompatDriver } from "./openai-compat.ts";
+import { OpenAIResponsesDriver } from "./openai-responses.ts";
 import { PiDriver } from "./pi.ts";
 import { MistralDriver } from "./mistral.ts";
 import { CerebrasDriver } from "./cerebras.ts";
@@ -41,6 +42,7 @@ export const BUILT_IN_DRIVERS: readonly AnyProviderDriver[] = [
   CustomAcpDriver,
   PiDriver,
   OpenAICompatDriver,
+  OpenAIResponsesDriver,
   ClaudeDriver,
   CodexDriver,
   AntigravityDriver,
