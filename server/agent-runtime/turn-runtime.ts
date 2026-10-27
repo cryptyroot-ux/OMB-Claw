@@ -124,7 +124,6 @@ export async function runNativeTurn(context: NativeTurnContext): Promise<void> {
     };
     const mcpSession = createChatCapabilitySession({ session: tools, approval });
     const fileRoot = turn.botId ? workspaceDir(turn.botId) : process.cwd();
-    console.log("TURNRUNTIME toolsEnabled=", context.toolsEnabled, "turn.toolScope=", JSON.stringify(turn.toolScope));
     const providers: any[] = [
       new SessionCapabilityProvider("mcp", "mcp", mcpSession, "MCP tools"),
     ];
