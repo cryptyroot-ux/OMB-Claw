@@ -282,8 +282,49 @@ export function createAgentEngine(dependencies: {
           let lastCompactAttempt = 0;
           let lastReportedInputTokens = 0;
           const keepTokens = compactionKeepTokens(modelCapabilities.contextWindow);
+          const precomputeTrigger = Math.floor(budget.trigger * 0.7);
+          let precomputed: { readonly summary: string; readonly cut: number; readonly messageCount: number; readonly model: string } | null = null;
+          let overflowRejected = false;
+
+          const firePrecompute = (): void => {
+            if (precomputed || overflowRejected) return;
+            if (compactions >= COMPACTION_MAX_PER_RUN || messages.length < COMPACTION_MIN_MESSAGES) return;
+            const body = messages.filter((m) => m.role !== "system");
+            const cut = chooseCompactionCut(body, keepTokens);
+            if (cut <= 0 || cut >= body.length - 1) return;
+            const older = body.slice(0, cut);
+            if (older.length < 2) return;
+            const transcript = compactionTranscript(older);
+            if (!transcript.trim()) return;
+            const snapshotCount = messages.length;
+            const snapshotModel = request.providerModel.modelId;
+            void (async () => {
+              let summary = "";
+              try {
+                for await (const event of adapter.generate({
+                  messages: [{ role: "system", content: SUMMARY_PROMPT }, { role: "user", content: transcript }],
+                  model: request.providerModel.modelId,
+                  tools: [],
+                  signal,
+                })) {
+                  if (event.type === "content.delta" && event.kind === "assistant_text") summary += event.delta;
+                }
+              } catch {
+                return;
+              }
+              summary = summary.trim();
+              if (!summary) return;
+              if (summary.length > SUMMARY_MAX_CHARS) summary = summary.slice(0, SUMMARY_MAX_CHARS) + "…";
+              if (messages.length !== snapshotCount) return;
+              if (request.providerModel.modelId !== snapshotModel) return;
+              precomputed = { summary, cut, messageCount: snapshotCount, model: snapshotModel };
+            })();
+          };
+
           const compact = async (trigger: "auto" | "overflow"): Promise<boolean> => {
             lastCompactAttempt = messages.length;
+            precomputed = null;
+            if (trigger === "overflow") overflowRejected = true;
             if (compactions >= COMPACTION_MAX_PER_RUN || messages.length < COMPACTION_MIN_MESSAGES) return false;
             const system = messages.filter((message) => message.role === "system");
             const body = messages.filter((message) => message.role !== "system");
@@ -341,6 +382,7 @@ export function createAgentEngine(dependencies: {
             signal.throwIfAborted();
             if (control.steers.length) {
               for (const text of control.steers.splice(0)) messages.push({ role: "user", content: text });
+              precomputed = null;
             }
             if (runBudget?.maxWallTimeMs && Date.now() - runStartedAt > runBudget.maxWallTimeMs) {
               budgetExhausted = true;
@@ -348,12 +390,53 @@ export function createAgentEngine(dependencies: {
             if (budgetExhausted) {
               throw new AgentRuntimeError("budget_exhausted", "Turn stopped at the configured token, cost, or time budget.");
             }
+            const tokenEst = estimateTokens(messages);
+            // Fire background precompute early (OpenCode-style).
+            // Precompute only while approaching (not yet over) the trigger, so we don't
+            // fire a redundant summary call when compaction is already required now.
+            if (tokenEst > precomputeTrigger && tokenEst <= budget.trigger && !precomputed && !overflowRejected) {
+              firePrecompute();
+            }
             if (
               compactions < COMPACTION_MAX_PER_RUN
               && messages.length - lastCompactAttempt >= COMPACTION_MIN_MESSAGE_GAP
-              && (estimateTokens(messages) > budget.trigger || lastReportedInputTokens > budget.trigger)
+              && (tokenEst > budget.trigger || lastReportedInputTokens > budget.trigger)
             ) {
-              await compact("auto");
+              // Prefer precomputed summary if still valid.
+              const pc = precomputed as { readonly summary: string; readonly cut: number; readonly messageCount: number; readonly model: string } | null;
+              if (pc && pc.messageCount === messages.length && pc.model === request.providerModel.modelId) {
+                const system = messages.filter((m) => m.role === "system");
+                const body = messages.filter((m) => m.role !== "system");
+                const cut = pc.cut;
+                if (cut > 0 && cut < body.length - 1) {
+                  const older = body.slice(0, cut);
+                  if (older.length >= 2) {
+                    const firstKept = body[cut]!;
+                    const summaryMessage: ModelMessage = {
+                      role: firstKept.role === "assistant" ? "user" : "assistant",
+                      content: `[Earlier conversation summary — ${older.length} message${older.length === 1 ? "" : "s"} compacted to fit the model window. The full transcript remains in the app.]\n\n${pc.summary}`,
+                    };
+                    messages.splice(0, messages.length, ...system, summaryMessage, ...body.slice(cut));
+                    compactions++;
+                    lastCompactAttempt = messages.length;
+                    const tokenEstimate = estimateTokens(messages);
+                    dependencies.store.recordCompaction?.({
+                      runId,
+                      sequence: compactions,
+                      summary: pc.summary,
+                      firstKeptIndex: cut,
+                      tokenEstimate,
+                      trigger: "auto",
+                      createdAt: Date.now(),
+                    });
+                    emit(request.threadId, { type: "run.compacted", runId, summary: pc.summary, firstKeptIndex: cut, tokenEstimate, trigger: "auto" });
+                  }
+                }
+                precomputed = null;
+              } else {
+                await compact("auto");
+                precomputed = null;
+              }
             }
             let toolDescriptors = allowTools ? runCapabilities.list(request.grant) : [];
             if (toolDescriptors.length > 0 && modelCapabilities.tools !== "supported") {
@@ -440,6 +523,7 @@ export function createAgentEngine(dependencies: {
                   && await compact("overflow")
                 ) {
                   sizeRetries++;
+                  precomputed = null;
                   continue;
                 }
                 if (
@@ -449,6 +533,7 @@ export function createAgentEngine(dependencies: {
                   && !outputVisible
                   && !signal.aborted
                 ) {
+                  overflowRejected = true;
                   const shrunk = shrinkMessages(messages, sizeRetries);
                   if (shrunk) {
                     messages.splice(0, messages.length, ...shrunk);
