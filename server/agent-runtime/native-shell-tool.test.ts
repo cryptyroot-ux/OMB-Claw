@@ -47,4 +47,17 @@ describe("native shell tool", () => {
     expect(r.ok).toBe(true);
     expect(r.content).toContain(root);
   });
+
+  it("blocks write commands in read-only sandbox", async () => {
+    const roCtx = { ...ctx, sandboxMode: "read-only" as const };
+    const r = await runShellTool(roCtx, { command: "rm -rf /tmp/x" });
+    expect(r.ok).toBe(false);
+    expect(r.content).toContain("read-only sandbox");
+  });
+
+  it("allows read commands in read-only sandbox", async () => {
+    const roCtx = { ...ctx, sandboxMode: "read-only" as const };
+    const r = await runShellTool(roCtx, { command: "echo hello" });
+    expect(r.ok).toBe(true);
+  });
 });

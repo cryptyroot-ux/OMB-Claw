@@ -13,6 +13,7 @@ const TRUNCATE_NOTICE = "\n\n[Output truncated at 1 MB. Re-run with a narrower c
 export interface ShellToolContext {
   readonly root: string;
   readonly env?: NodeJS.ProcessEnv;
+  readonly sandboxMode?: "workspace-write" | "read-only" | "full";
 }
 
 export interface ShellToolResult {
@@ -32,9 +33,20 @@ function stripControlPlaneEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return out;
 }
 
+const WRITE_INDICATORS = /\b(rm|mv|cp|chmod|chown|mkdir|rmdir|touch|dd|tee|truncate|install|ln|rsync|scp)\b|[>]{1,2}/;
+
+function isWriteCommand(command: string): boolean {
+  return WRITE_INDICATORS.test(command);
+}
+
 export async function runShellTool(ctx: ShellToolContext, args: Record<string, unknown>): Promise<ShellToolResult> {
   const command = String(args?.command ?? "").trim();
   if (!command) return { ok: false, content: "command is required", error: "command is required", exitCode: null, durationMs: 0 };
+
+  const sandboxMode = ctx.sandboxMode ?? "workspace-write";
+  if (sandboxMode === "read-only" && isWriteCommand(command)) {
+    return { ok: false, content: "Command blocked: read-only sandbox mode does not allow write operations.", error: "sandbox_blocked", exitCode: null, durationMs: 0 };
+  }
 
   const timeout = Math.min(Math.max(1000, Number(args?.timeout) || DEFAULT_TIMEOUT_MS), MAX_TIMEOUT_MS);
   const description = args?.description ? String(args.description) : "";
