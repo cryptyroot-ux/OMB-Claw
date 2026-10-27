@@ -229,6 +229,8 @@ Phase 4 (done, acceptance met): supportedAgentDrivers contains only API provider
 
 Phase 4 cleanup (partial): key-rejection marking (noteKeyRejected) has been moved into all four model adapters (OpenAI, Anthropic, Gemini, Responses) so the native path now marks rejected keys. The legacy driver loop remains (reachable in tests) because migrating 40+ openai-chat.test.ts cases to the native path is high-risk; deferred. generateText helper now routes through the adapter for non-OpenAI providers (Phase 2 follow-up).
 
+Upstream check (2026-10-28): fetched origin/main (v0.1.129, 40+ commits since base bd569fb78). Reviewed all: only `0cd63a7db` (Gemini tool calls stream whole with id and no index) was relevant — applied to model-adapter.ts and openai-chat-protocol.ts. Other commits are UI/feature improvements (bot-apps tool grants, tool-receipts stale, i18n, desktop update, LM Studio catalog) — not critical for OMB-Claw native engine. No security fixes requiring cherry-pick.
+
 Phase 5 (done): independence proof = native-only.e2e.test.ts (sealed PATH, no external engine process, agent_runs completed, MCP tool executed, artifact created). Eval report = evals/runners/run-evals.ts produces reproducible JSON report with resolve rate, model rounds, tool calls, wall time, request count, compactions, recovery_required (latest: 100% resolve, 1/1 task). External benchmarks (SWE-bench Verified, Terminal-Bench, CodeClash, ProgramBench) remain for future work; the harness skeleton exists under evals/.
 
 Phase B/C/D progress (2026-10-28):
