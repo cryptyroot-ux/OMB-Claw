@@ -2,7 +2,7 @@
 import { existsSync } from "node:fs";
 import { join, sep } from "node:path";
 
-export const LATEST_RELEASE_URL = "https://api.github.com/repos/cryptyroot-ux/OMB-Claw/releases/latest";
+export const LATEST_RELEASE_URL = "https://api.github.com/repos/cryptyroot-ux/OMB-Claw/commits/feature/native-agent-engine";
 const CACHE_MS = 60 * 60_000;
 
 /** "managed" is a hosted or Cloud server that is updated for its owner. */
@@ -97,14 +97,37 @@ export function createUpdateChecker(options: {
           signal: AbortSignal.timeout(8_000),
         });
         if (!response.ok) throw new Error(`GitHub answered ${response.status}`);
-        const release = await response.json() as { tag_name?: unknown; html_url?: unknown };
-        if (typeof release.tag_name !== "string") throw new Error("GitHub sent no release tag");
-        const latest = release.tag_name.replace(/^v/, "");
+        const data = await response.json() as { sha?: unknown; html_url?: unknown; tag_name?: unknown };
+        // Handle both commit and release responses
+        let latest: string;
+        let releaseUrl: string | undefined;
+        if (typeof data.sha === "string") {
+          // Commit response: use short SHA as version identifier
+          latest = data.sha.slice(0, 7);
+          releaseUrl = typeof data.html_url === "string" ? data.html_url : undefined;
+          // An update is available if the remote SHA differs from local HEAD
+          const { execSync } = await import("node:child_process");
+          let currentSha = "";
+          try { currentSha = execSync("git rev-parse --short HEAD", { cwd: "/root/OMB-Claw", encoding: "utf8" }).trim(); } catch {}
+          const available = currentSha !== "" && currentSha !== latest;
+          const result: UpdateCheck = {
+            ...base(),
+            latest,
+            available,
+            ...(releaseUrl ? { releaseUrl } : {}),
+          };
+          cached = { at: now(), result };
+          return result;
+        }
+        // Release response
+        if (typeof data.tag_name !== "string") throw new Error("GitHub sent no release tag");
+        latest = data.tag_name.replace(/^v/, "");
+        releaseUrl = typeof data.html_url === "string" ? data.html_url : undefined;
         const result: UpdateCheck = {
           ...base(),
           latest,
           available: isNewerVersion(latest, options.current),
-          ...(typeof release.html_url === "string" ? { releaseUrl: release.html_url } : {}),
+          ...(releaseUrl ? { releaseUrl } : {}),
         };
         cached = { at: now(), result };
         return result;
