@@ -118,7 +118,7 @@ export function createUpdateChecker(options: {
         let releaseUrl: string | undefined;
         if (typeof data.sha === "string") {
           // Commit response: use short SHA as version identifier
-          latest = data.sha.slice(0, 7);
+          latest = data.sha.slice(0, 9);
           releaseUrl = typeof data.html_url === "string" ? data.html_url : undefined;
           // An update is available if the remote SHA differs from local HEAD
           const { execSync } = await import("node:child_process");
