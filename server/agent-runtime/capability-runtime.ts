@@ -283,13 +283,21 @@ export class SessionCapabilityProvider implements CapabilityProvider {
 
 /** Composite capability runtime: aggregates multiple CapabilityProviders behind one
  *  CapabilitySession so a turn uses one mount/invoke/close path and one policy. */
+export type CapabilityPolicy = (call: CapabilityCall, grant: CapabilityGrant) => { readonly allowed: boolean; readonly reason?: string };
+
 export class CompositeCapabilityRuntime implements CapabilitySession {
   private readonly providers: CapabilityProvider[];
+  private readonly policy: CapabilityPolicy;
   private mounted = false;
   private closed = false;
 
-  constructor(providers: CapabilityProvider[]) {
+  constructor(providers: CapabilityProvider[], policy?: CapabilityPolicy) {
     this.providers = providers;
+    this.policy = policy ?? ((call, grant) => {
+      if (grant.denied.has(call.capabilityId)) return { allowed: false, reason: `Capability denied: ${call.capabilityId}` };
+      if (grant.allowed.size > 0 && !grant.allowed.has(call.capabilityId)) return { allowed: false, reason: `Capability not allowed: ${call.capabilityId}` };
+      return { allowed: true };
+    });
   }
 
   async mountAll(context: { readonly grant: CapabilityGrant; readonly signal: AbortSignal }): Promise<void> {
@@ -310,9 +318,8 @@ export class CompositeCapabilityRuntime implements CapabilitySession {
     if (this.closed) throw new Error("Capability runtime is closed");
     const provider = this.providers.find((p) => p.list(grant).some((d) => d.id === call.capabilityId));
     if (!provider) throw new Error(`Capability not found: ${call.capabilityId}`);
-    // Grant check is centralized here (one policy).
-    if (grant.denied.has(call.capabilityId)) throw new Error(`Capability denied: ${call.capabilityId}`);
-    if (grant.allowed.size > 0 && !grant.allowed.has(call.capabilityId)) throw new Error(`Capability not allowed: ${call.capabilityId}`);
+    const decision = this.policy(call, grant);
+    if (!decision.allowed) throw new Error(decision.reason ?? `Capability denied: ${call.capabilityId}`);
     provider.validate(call, grant);
   }
 
@@ -324,6 +331,10 @@ export class CompositeCapabilityRuntime implements CapabilitySession {
       this.validate(call, context.grant);
     } catch (error) {
       return { callId: call.callId, ok: false, content: error instanceof Error ? error.message : String(error), error: "denied" };
+    }
+    const decision = this.policy(call, context.grant);
+    if (!decision.allowed) {
+      return { callId: call.callId, ok: false, content: decision.reason ?? "denied", error: "denied" };
     }
     try {
       context.signal.throwIfAborted();

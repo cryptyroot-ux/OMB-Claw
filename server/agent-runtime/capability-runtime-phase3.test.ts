@@ -14,6 +14,7 @@ describe("CompositeCapabilityRuntime", () => {
       id: "p1", kind: "native-tool" as const,
       list: () => [{ id: "tool_a", name: "tool_a", description: "a", schema: {}, risk: "read" as const, sideEffect: false, timeoutMs: 1000 }],
       mount: async () => {},
+      validate: () => {},
       invoke: async (call: any) => ({ callId: call.callId, ok: true, content: "done" }),
       close: async () => {},
       describe: () => "p1",
@@ -43,5 +44,69 @@ describe("SkillCapabilityProvider", () => {
     const res = await provider.invoke({ runId: "r", callId: "c", capabilityId: "skill:nope", arguments: {}, botId: "bot-1", threadId: "t-1" }, { grant, signal: new AbortController().signal });
     expect(res.ok).toBe(false);
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe("CapabilityProvider denial/failure per type", () => {
+  const grant: CapabilityGrant = { botId: "bot-1", threadId: "t-1", approvalMode: "full", allowed: new Set(), denied: new Set() };
+
+  it("MCP provider: denied grant returns denied", async () => {
+    const session = {
+      list: () => [{ id: "mcp_tool", name: "mcp_tool", description: "mcp", schema: {}, risk: "read" as const, sideEffect: false, timeoutMs: 1000 }],
+      validate: () => {},
+      invoke: async () => ({ callId: "c", ok: true, content: "ok" }),
+      close: async () => {},
+    };
+    const provider = new (await import("./capability-runtime.ts")).SessionCapabilityProvider("mcp", "mcp", session as any, "MCP");
+    const runtime = new (await import("./capability-runtime.ts")).CompositeCapabilityRuntime([provider]);
+    await runtime.mountAll({ grant, signal: new AbortController().signal });
+    const deniedGrant: CapabilityGrant = { ...grant, denied: new Set(["mcp_tool"]) };
+    const res = await runtime.invoke({ runId: "r", callId: "c", capabilityId: "mcp_tool", arguments: {}, botId: "bot-1", threadId: "t-1" }, { grant: deniedGrant, signal: new AbortController().signal });
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe("denied");
+    await runtime.close();
+  });
+
+  it("MCP provider: invoke failure returns failed", async () => {
+    const session = {
+      list: () => [{ id: "mcp_tool", name: "mcp_tool", description: "mcp", schema: {}, risk: "read" as const, sideEffect: false, timeoutMs: 1000 }],
+      validate: () => {},
+      invoke: async () => { throw new Error("boom"); },
+      close: async () => {},
+    };
+    const { SessionCapabilityProvider, CompositeCapabilityRuntime } = await import("./capability-runtime.ts");
+    const provider = new SessionCapabilityProvider("mcp", "mcp", session as any, "MCP");
+    const runtime = new CompositeCapabilityRuntime([provider]);
+    await runtime.mountAll({ grant, signal: new AbortController().signal });
+    const res = await runtime.invoke({ runId: "r", callId: "c", capabilityId: "mcp_tool", arguments: {}, botId: "bot-1", threadId: "t-1" }, { grant, signal: new AbortController().signal });
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe("failed");
+    await runtime.close();
+  });
+
+  it("skill provider: missing skill returns not_found", async () => {
+    const { SkillCapabilityProvider } = await import("./capability-runtime.ts");
+    const provider = new SkillCapabilityProvider("no-such-bot-xyz");
+    const res = await provider.invoke({ runId: "r", callId: "c", capabilityId: "skill:nope", arguments: {}, botId: "bot-1", threadId: "t-1" }, { grant, signal: new AbortController().signal });
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe("not_found");
+    await provider.close();
+  });
+
+  it("custom policy hook is respected", async () => {
+    const session = {
+      list: () => [{ id: "t", name: "t", description: "t", schema: {}, risk: "read" as const, sideEffect: false, timeoutMs: 1000 }],
+      validate: () => {},
+      invoke: async () => ({ callId: "c", ok: true, content: "ok" }),
+      close: async () => {},
+    };
+    const { SessionCapabilityProvider, CompositeCapabilityRuntime } = await import("./capability-runtime.ts");
+    const provider = new SessionCapabilityProvider("mcp", "mcp", session as any, "MCP");
+    const runtime = new CompositeCapabilityRuntime([provider], () => ({ allowed: false, reason: "policy-blocked" }));
+    await runtime.mountAll({ grant, signal: new AbortController().signal });
+    const res = await runtime.invoke({ runId: "r", callId: "c", capabilityId: "t", arguments: {}, botId: "bot-1", threadId: "t-1" }, { grant, signal: new AbortController().signal });
+    expect(res.ok).toBe(false);
+    expect(res.content).toBe("policy-blocked");
+    await runtime.close();
   });
 });
