@@ -60,7 +60,6 @@ function modelEventFailure(message: string): AgentRuntimeError {
 
 const OMITTED_IMAGE = "[image omitted to fit the provider's size limit]";
 const SHORT_TOOL_CHARS = 2_000;
-const COMPACTION_KEEP_TOKENS = 20_000;
 const COMPACTION_MIN_MESSAGES = 6;
 const COMPACTION_MAX_PER_RUN = 3;
 const COMPACTION_MIN_MESSAGE_GAP = 4;
@@ -68,6 +67,13 @@ const DEFAULT_CONTEXT_WINDOW = 128_000;
 const SUMMARY_CLIP_CHARS = 2_000;
 const SUMMARY_TRANSCRIPT_CHARS = 120_000;
 const TOOL_OUTPUT_PROMPT_CHARS = 8_000;
+const SUMMARY_MAX_CHARS = 4_000;
+
+/** Proportional keep: 25% of context window, clamped to [8k, 32k]. */
+export function compactionKeepTokens(contextWindow: { readonly status: "known"; readonly value: number } | { readonly status: "unknown" }): number {
+  const window = contextWindow.status === "known" ? contextWindow.value : DEFAULT_CONTEXT_WINDOW;
+  return Math.min(32_000, Math.max(8_000, Math.floor(window * 0.25)));
+}
 
 const SUMMARY_PROMPT = [
   "You are compacting an agent conversation so it can continue in a smaller context window.",
@@ -117,28 +123,54 @@ function compactionTranscript(messages: readonly ModelMessage[]): string {
   return lines.join("\n\n");
 }
 
-/** Keep the system prompt and the recent block; replace images with text and shorten tool outputs. Dropping older
- * history never repeats a tool call, and the current turn's assistant/tool messages stay together. */
+/** Graduated shrink: attempt 0 keeps last 8 non-system messages + user turn; attempt 1 keeps last 4 + drops images; attempt 2 keeps last 2. */
 function shrinkMessages(messages: readonly ModelMessage[], attempt: number): ModelMessage[] | null {
   const system = messages.filter((message) => message.role === "system");
   const rest = messages.filter((message) => message.role !== "system");
   const lastUser = rest.findLastIndex((message) => message.role === "user");
   if (lastUser < 0) return null;
-  const keepFrom = Math.max(0, lastUser - (attempt === 0 ? 8 : 2));
+
+  let windowSize: number;
+  switch (attempt) {
+    case 0:
+      windowSize = 8;
+      break;
+    case 1:
+      windowSize = 4;
+      break;
+    case 2:
+      windowSize = 2;
+      break;
+    default:
+      windowSize = 0; // keep only the user and any assistant/tool messages after
+  }
+
+  const keepFrom = Math.max(0, lastUser - windowSize);
   const dropped = keepFrom;
   const kept = rest.slice(keepFrom).map((message) => {
     const content = message.content;
     if (content === null || content === undefined) return message;
-    const shrunk = Array.isArray(content)
-      ? content.map((part) => part.type === "image" ? { type: "text" as const, text: OMITTED_IMAGE } : part)
-      : message.role === "tool" && content.length > SHORT_TOOL_CHARS
-        ? `${content.slice(0, SHORT_TOOL_CHARS)}\n[tool output shortened to fit the provider's size limit]`
-        : content;
+    let shrunk: string | readonly ModelContentPart[];
+    if (Array.isArray(content)) {
+      shrunk = content.map((part) =>
+        part.type === "image"
+          ? { type: "text" as const, text: OMITTED_IMAGE }
+          : part
+      );
+    } else {
+      // string content
+      shrunk =
+        message.role === "tool" && content.length > SHORT_TOOL_CHARS
+          ? `${content.slice(0, SHORT_TOOL_CHARS)}\n[tool output shortened to fit the provider's size limit]`
+          : content;
+    }
     return { ...message, content: shrunk };
   });
+
   const note: ModelMessage[] = dropped > 0
     ? [{ role: "assistant", content: `[${dropped} earlier message${dropped === 1 ? "" : "s"} omitted to fit the provider's size limit; the full history remains in the app.]` }]
     : [];
+
   return [...system, ...note, ...kept];
 }
 
@@ -247,12 +279,14 @@ export function createAgentEngine(dependencies: {
           let hasCost = false;
           let compactions = 0;
           let lastCompactAttempt = 0;
+          let lastReportedInputTokens = 0;
+          const keepTokens = compactionKeepTokens(modelCapabilities.contextWindow);
           const compact = async (trigger: "auto" | "overflow"): Promise<boolean> => {
             lastCompactAttempt = messages.length;
             if (compactions >= COMPACTION_MAX_PER_RUN || messages.length < COMPACTION_MIN_MESSAGES) return false;
             const system = messages.filter((message) => message.role === "system");
             const body = messages.filter((message) => message.role !== "system");
-            const cut = chooseCompactionCut(body, COMPACTION_KEEP_TOKENS);
+            const cut = chooseCompactionCut(body, keepTokens);
             if (cut <= 0 || cut >= body.length - 1) return false;
             const older = body.slice(0, cut);
             if (older.length < 2) return false;
@@ -278,6 +312,8 @@ export function createAgentEngine(dependencies: {
             }
             summary = summary.trim();
             if (!summary) return false;
+            // Cap summary to SUMMARY_MAX_CHARS to avoid exceeding budget
+            if (summary.length > SUMMARY_MAX_CHARS) summary = summary.slice(0, SUMMARY_MAX_CHARS) + "…";
             const firstKept = body[cut]!;
             const summaryMessage: ModelMessage = {
               role: firstKept.role === "assistant" ? "user" : "assistant",
@@ -314,7 +350,7 @@ export function createAgentEngine(dependencies: {
             if (
               compactions < COMPACTION_MAX_PER_RUN
               && messages.length - lastCompactAttempt >= COMPACTION_MIN_MESSAGE_GAP
-              && estimateTokens(messages) > budget.trigger
+              && (estimateTokens(messages) > budget.trigger || lastReportedInputTokens > budget.trigger)
             ) {
               await compact("auto");
             }
@@ -362,6 +398,8 @@ export function createAgentEngine(dependencies: {
                       if (event.costUsd !== undefined) { totalCost += event.costUsd; hasCost = true; }
                       if (runBudget?.maxTokens && totalTokens > runBudget.maxTokens) budgetExhausted = true;
                       if (runBudget?.maxCostUsd && hasCost && totalCost > runBudget.maxCostUsd) budgetExhausted = true;
+                      // Track last reported input tokens for usage-aware trigger
+                      lastReportedInputTokens = event.input;
                       emit(request.threadId, { type: "usage", runId, input: event.input, output: event.output, ...(event.cachedInput !== undefined ? { cachedInput: event.cachedInput } : {}), ...(event.costUsd !== undefined ? { costUsd: event.costUsd } : {}) });
                       break;
                     case "completed":
