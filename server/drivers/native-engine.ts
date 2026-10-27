@@ -2,6 +2,7 @@ import type { ModelCatalog } from "../contracts.ts";
 import type { AgentEngine, ModelCapabilities } from "../agent-runtime/contracts.ts";
 import { createAgentEngine } from "../agent-runtime/runtime.ts";
 import { createOpenAICompatibleModelAdapter } from "../agent-runtime/model-adapter.ts";
+import { probeCapabilities } from "../agent-runtime/capability-probe.ts";
 import { createSqliteAgentRunStore } from "../agent-runtime/run-store.ts";
 
 /** Chat-completions drivers share one native engine shape: an OpenAI-compatible adapter over the same catalog the
@@ -26,21 +27,11 @@ export function createNativeChatEngine(options: NativeChatEngineOptions): AgentE
     apiKey: options.apiKey,
     catalog: options.catalog,
     reasoning: options.reasoning ?? false,
-    capabilities: (modelId): ModelCapabilities => {
-      const contextWindow = options.catalog().options.find((option) => option.id === modelId)?.contextWindow;
-      return {
-        tools: options.toolsEnabled === false ? "unsupported" : "supported",
-        parallelTools: "unknown",
-        streaming: "supported",
-        contextWindow: contextWindow ? { status: "known", value: contextWindow } : { status: "unknown" },
-        imageInput: options.imageInput?.(modelId) ? "supported" : "unsupported",
-        imageOutput: "unsupported",
-        audioInput: options.audioInput?.(modelId) ? "supported" : "unsupported",
-        audioOutput: "unsupported",
-        structuredOutput: "unsupported",
-        toolSchemaLimit: { status: "unknown" },
-      };
-    },
+    capabilities: (modelId): ModelCapabilities => probeCapabilities(modelId, options.catalog, {
+      toolsEnabled: options.toolsEnabled,
+      imageInput: options.imageInput,
+      audioInput: options.audioInput,
+    }),
   });
   return createAgentEngine({
     adapters: { resolve: () => adapter },
