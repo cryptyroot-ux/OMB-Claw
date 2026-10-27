@@ -9,6 +9,7 @@ import { toolSchemaProfileFor } from "../tool-schema-profile.ts";
 import { createChatCapabilitySession } from "./chat-capability-runtime.ts";
 import { CompositeCapabilityRuntime, SessionCapabilityProvider, SkillCapabilityProvider } from "./capability-runtime.ts";
 import { NativeFileCapabilityProvider } from "./native-file-capability-provider.ts";
+import { NativeShellCapabilityProvider } from "./native-shell-capability-provider.ts";
 import { workspaceDir } from "../workspace.ts";
 import type { AgentEngine, CapabilityGrant, CapabilitySession } from "./contracts.ts";
 
@@ -123,6 +124,7 @@ export async function runNativeTurn(context: NativeTurnContext): Promise<void> {
     const providers = [
       new SessionCapabilityProvider("mcp", "mcp", mcpSession, "MCP tools"),
       new NativeFileCapabilityProvider({ root: fileRoot }),
+      new NativeShellCapabilityProvider({ root: fileRoot }),
       new SkillCapabilityProvider(turn.botId ?? "", undefined),
     ];
     const composite = new CompositeCapabilityRuntime(providers);
