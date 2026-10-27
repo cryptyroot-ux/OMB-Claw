@@ -49,7 +49,7 @@ export const GeminiDriver: ProviderDriver<GeminiConfig> = {
       apiUrl: config.url,
       apiKey,
       catalog: () => MODELS,
-      capabilities: (modelId) => probeCapabilities(modelId, () => MODELS, { toolsEnabled: config.tools !== false, imageInput: () => true }),
+      capabilities: (modelId) => probeCapabilities(modelId, () => MODELS, { toolsEnabled: config.tools !== false && String(config.tools) !== "false", imageInput: () => true }),
       maxOutputTokens: config.maxOutputTokens,
     });
     const nativeAgentEngine = createNativeChatEngine({
@@ -57,7 +57,7 @@ export const GeminiDriver: ProviderDriver<GeminiConfig> = {
       apiUrl: config.url,
       apiKey,
       catalog: () => MODELS,
-      toolsEnabled: config.tools !== false,
+      toolsEnabled: config.tools !== false && String(config.tools) !== "false",
       imageInput: () => true,
       modelAdapter,
     });
@@ -65,6 +65,7 @@ export const GeminiDriver: ProviderDriver<GeminiConfig> = {
       input,
       driverKind: DRIVER_KIND,
       nativeAgentEngine,
+      modelAdapter,
       apiKey,
       apiUrl: config.url,
       tools: config.tools,

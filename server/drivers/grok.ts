@@ -43,7 +43,7 @@ export const GrokDriver: ProviderDriver<GrokConfig> = {
     const apiKey = input.environment[config.apiKeyEnv] ?? process.env[config.apiKeyEnv] ?? "";
     const nativeAgentEngine = createNativeChatEngine({
       providerId: DRIVER_KIND, apiUrl: config.url, apiKey, catalog: () => MODELS,
-      toolsEnabled: config.tools !== false, imageInput: () => true,
+      toolsEnabled: config.tools !== false && String(config.tools) !== "false", imageInput: () => true,
     });
     return createOpenAIChatRuntime({
       input,

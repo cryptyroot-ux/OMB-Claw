@@ -187,7 +187,7 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
       apiKey,
       catalog: () => catalog,
       reasoning: true,
-      toolsEnabled: config.tools !== false,
+      toolsEnabled: config.tools !== false && String(config.tools) !== "false",
       imageInput: () => true,
     });
 

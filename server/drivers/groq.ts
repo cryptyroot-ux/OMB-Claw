@@ -87,7 +87,7 @@ export const GroqDriver: ProviderDriver<GroqConfig> = {
     if (apiKey) void refreshModels();
     const nativeAgentEngine = createNativeChatEngine({
       providerId: "groq", apiUrl: config.url, apiKey, catalog: () => catalog, reasoning: true,
-      toolsEnabled: config.tools !== false, imageInput: () => false,
+      toolsEnabled: config.tools !== false && String(config.tools) !== "false", imageInput: () => false,
     });
     return createOpenAIChatRuntime({
       input, driverKind: "groq", apiKey, apiUrl: config.url,

@@ -97,7 +97,7 @@ export const MistralDriver: ProviderDriver<MistralConfig> = {
     if (apiKey) void refreshModels();
     const nativeAgentEngine = createNativeChatEngine({
       providerId: "mistral", apiUrl: config.url, apiKey, catalog: () => catalog,
-      toolsEnabled: config.tools !== false, imageInput: () => true,
+      toolsEnabled: config.tools !== false && String(config.tools) !== "false", imageInput: () => true,
     });
     return createOpenAIChatRuntime({
       input, driverKind: "mistral", apiKey, apiUrl: config.url,
