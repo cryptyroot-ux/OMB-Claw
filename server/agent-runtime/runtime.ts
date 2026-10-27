@@ -271,8 +271,11 @@ export function createAgentEngine(dependencies: {
           updateStatus("running");
           emit(request.threadId, { type: "run.started", runId, engineId: "omb-native", providerModel: request.providerModel });
 
-          const adapter = dependencies.adapters.resolve(request.providerModel);
-          const modelCapabilities = adapter.capabilities(request.providerModel.modelId);
+          const adapterChain = [dependencies.adapters.resolve(request.providerModel), ...(request.fallbackProviders ?? []).map((ref) => dependencies.adapters.resolve(ref))];
+          let adapterIndex = 0;
+          let adapter = adapterChain[0]!;
+          let currentModelId = request.providerModel.modelId;
+          const modelCapabilities = adapter.capabilities(currentModelId);
           const budget = contextBudget(modelCapabilities.contextWindow);
           const runBudget = request.budget;
           const runStartedAt = Date.now();
@@ -305,7 +308,7 @@ export function createAgentEngine(dependencies: {
               try {
                 for await (const event of adapter.generate({
                   messages: [{ role: "system", content: SUMMARY_PROMPT }, { role: "user", content: transcript }],
-                  model: request.providerModel.modelId,
+                  model: currentModelId,
                   tools: [],
                   signal,
                 })) {
@@ -345,7 +348,7 @@ export function createAgentEngine(dependencies: {
                   { role: "system", content: SUMMARY_PROMPT },
                   { role: "user", content: transcript },
                 ],
-                model: request.providerModel.modelId,
+                model: currentModelId,
                 tools: [],
                 signal,
               })) {
@@ -467,7 +470,7 @@ export function createAgentEngine(dependencies: {
               try {
                 for await (const event of adapter.generate({
                   messages,
-                  model: request.providerModel.modelId,
+                  model: currentModelId,
                   tools: toolDescriptors,
                   signal,
                 })) {
@@ -557,6 +560,14 @@ export function createAgentEngine(dependencies: {
                   && !capabilityDispatched
                   && !signal.aborted
                   && attempt < RETRY_MAX_ATTEMPTS - 1;
+                // Fallback provider chain: on terminal failure, try the next provider.
+                if (!canRetry && isModelAdapterError(error) && error.code === "terminal" && adapterIndex < adapterChain.length - 1) {
+                  adapterIndex++;
+                  adapter = adapterChain[adapterIndex]!;
+                  if (request.fallbackProviders?.[adapterIndex - 1]) currentModelId = request.fallbackProviders[adapterIndex - 1].modelId;
+                  sizeRetries = 0;
+                  continue;
+                }
                 if (!canRetry) throw error;
                 const wait = interruptibleDelay(computeBackoff(attempt), signal);
                 const waited = await wait.promise;

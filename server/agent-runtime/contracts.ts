@@ -244,6 +244,8 @@ export interface AgentRunRequest {
   readonly text: string;
   readonly messages: ReadonlyArray<ModelMessage>;
   readonly providerModel: ProviderModelRef;
+  /** Optional fallback providers tried in order when the primary fails with a terminal error. */
+  readonly fallbackProviders?: ReadonlyArray<ProviderModelRef>;
   readonly grant: CapabilityGrant;
   readonly capabilities: CapabilitySession;
   readonly signal: AbortSignal;
