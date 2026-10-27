@@ -1,16 +1,19 @@
 import type { CapabilityCall, CapabilityDescriptor, CapabilityGrant, CapabilityProvider, CapabilityResult } from "./contracts.ts";
 import { runShellTool, SHELL_TOOL_DESCRIPTOR, type ShellToolContext } from "./native-shell-tool.ts";
+import { allowsTool } from "../../shared/tool-scope.ts";
 
 export class NativeShellCapabilityProvider implements CapabilityProvider {
   readonly id = "native-shell";
   readonly kind = "native-tool" as const;
   private readonly ctx: ShellToolContext;
+  private readonly scope: unknown;
   private closed = false;
 
-  constructor(ctx: ShellToolContext) { this.ctx = ctx; }
+  constructor(ctx: ShellToolContext, scope?: unknown) { this.ctx = ctx; this.scope = scope; }
 
   list(grant: CapabilityGrant): ReadonlyArray<CapabilityDescriptor> {
     if (this.closed) return [];
+    if (!allowsTool(this.scope, { kind: "native", name: "bash" })) return [];
     if (grant.denied.has("bash")) return [];
     if (grant.allowed.size > 0 && !grant.allowed.has("bash")) return [];
     return [{

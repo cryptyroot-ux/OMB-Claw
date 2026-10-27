@@ -134,10 +134,10 @@ export async function runNativeTurn(context: NativeTurnContext): Promise<void> {
     // the MCP tools flag, but they DO respect toolScope.
     const nativeAllowed = allowsTool(scope, { kind: "native", name: "*" });
     if (nativeAllowed) {
-      providers.push(new NativeFileCapabilityProvider({ root: fileRoot }));
-      providers.push(new NativeShellCapabilityProvider({ root: fileRoot }));
-      providers.push(new NativeGitCapabilityProvider({ root: fileRoot }));
-      providers.push(new NativeWebCapabilityProvider({ root: fileRoot }));
+      providers.push(new NativeFileCapabilityProvider({ root: fileRoot }, scope));
+      providers.push(new NativeShellCapabilityProvider({ root: fileRoot }, scope));
+      providers.push(new NativeGitCapabilityProvider({ root: fileRoot }, scope));
+      providers.push(new NativeWebCapabilityProvider({ root: fileRoot }, scope));
     }
     if (nativeAllowed) providers.push(new ToolSearchCapabilityProvider(() => mcpSession));
     providers.push(new SkillCapabilityProvider(turn.botId ?? "", undefined));

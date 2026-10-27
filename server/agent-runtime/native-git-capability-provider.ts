@@ -1,16 +1,19 @@
 import type { CapabilityCall, CapabilityDescriptor, CapabilityGrant, CapabilityProvider, CapabilityResult } from "./contracts.ts";
 import { runGitTool, GIT_TOOL_DESCRIPTOR, type GitToolContext } from "./native-git-tool.ts";
+import { allowsTool } from "../../shared/tool-scope.ts";
 
 export class NativeGitCapabilityProvider implements CapabilityProvider {
   readonly id = "native-git";
   readonly kind = "native-tool" as const;
   private readonly ctx: GitToolContext;
+  private readonly scope: unknown;
   private closed = false;
 
-  constructor(ctx: GitToolContext) { this.ctx = ctx; }
+  constructor(ctx: GitToolContext, scope?: unknown) { this.ctx = ctx; this.scope = scope; }
 
   list(grant: CapabilityGrant): ReadonlyArray<CapabilityDescriptor> {
     if (this.closed) return [];
+    if (!allowsTool(this.scope, { kind: "native", name: "git" })) return [];
     if (grant.denied.has("git")) return [];
     if (grant.allowed.size > 0 && !grant.allowed.has("git")) return [];
     return [{

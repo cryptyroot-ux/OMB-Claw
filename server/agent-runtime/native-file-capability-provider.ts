@@ -1,21 +1,24 @@
 import type { CapabilityCall, CapabilityDescriptor, CapabilityGrant, CapabilityProvider, CapabilityResult } from "./contracts.ts";
+import { allowsTool } from "../../shared/tool-scope.ts";
 import { FILE_TOOL_DESCRIPTORS, runFileTool, type FileToolContext } from "./native-file-tools.ts";
 
 export class NativeFileCapabilityProvider implements CapabilityProvider {
   readonly id: string;
   readonly kind = "native-tool" as const;
   private readonly ctx: FileToolContext;
+  private readonly scope: unknown;
   private closed = false;
 
-  constructor(ctx: FileToolContext) {
+  constructor(ctx: FileToolContext, scope?: unknown) {
     this.ctx = ctx;
+    this.scope = scope;
     this.id = "native-file-tools";
   }
 
   list(grant: CapabilityGrant): ReadonlyArray<CapabilityDescriptor> {
     if (this.closed) return [];
     if (grant.denied.has(this.id) && grant.allowed.size > 0 && !grant.allowed.has(this.id)) return [];
-    return FILE_TOOL_DESCRIPTORS.map((d) => ({
+    return FILE_TOOL_DESCRIPTORS.filter((d) => allowsTool(this.scope, { kind: "native", name: d.name })).map((d) => ({
       id: d.id,
       name: d.name,
       description: d.description,
