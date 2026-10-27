@@ -132,9 +132,15 @@ model gateway only; no turn-cycle code remains in `server/drivers`. Verification
 agent-runtime 11 files / 67 tests; openai-chat shim 5 files / 207 tests; chat-size-limit; native-only +
 openai-tools 4 tests; native-ui 1 test.
 
-Phase 1b step 4 (next): retire the legacy driver loop from the default path for API drivers (it now
-lives in the runtime; remove it once the native path is the only path and the suite is green). Phase 2
-(provider/model adapters + capability detection) follows.
+Phase 1b step 4 (deferred): retiring the legacy loop is NOT done yet. Removing it makes 40+ tests in
+`openai-chat.test.ts` (rejected-key handling, key rejection, provider error classification) fail, because
+those behaviors live in the legacy loop's `complete()` (`noteKeyRejected`, `rejectsKey`) and are not yet
+handled by the native model adapter. To retire safely: (a) move key-rejection / provider-error
+classification into `server/agent-runtime/model-adapter.ts` (and the Anthropic/Gemini/Responses adapters
+in Phase 2), (b) update the affected tests to pass `agentEngine: "omb-native"` (or keep a legacy suite
+behind an explicit flag per audit §4). Until then the legacy loop stays as unreachable-in-production
+code (API drivers always set `agentEngine: "omb-native"` via `usesNativeAgentEngine`). Phase 2 is the
+next phase.
 
 Acceptance: `rg "nativeEngine.run" server/drivers` returns no driver-owned call; only `TurnRuntime`
 invokes the engine. `server/index.ts` calls `TurnRuntime`, not `ProviderAdapter.sendTurn`.
