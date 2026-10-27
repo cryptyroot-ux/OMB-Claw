@@ -27,7 +27,7 @@ import { toolSchemaProfileFor } from "../tool-schema-profile.ts";
 import { classifyContinuable, writeTurnHandoff } from "../turn-continuation.ts";
 import { KEY_REJECTED_REASON, keyRejected, noteKeyAccepted, noteKeyRejected, rejectsKey } from "../key-rejections.ts";
 import { rejectsToolsParameter } from "../tool-rejection.ts";
-import type { AgentEngine } from "./contracts.ts";
+import type { AgentEngine, ModelAdapter } from "./contracts.ts";
 import { runNativeTurn, type NativeSteerState } from "./turn-runtime.ts";
 import { announcesAction, MAX_ANNOUNCEMENT_NUDGES, NUDGE_ANNOUNCED_ACTION } from "./announcement.ts";
 
@@ -134,6 +134,8 @@ interface RuntimeOptions<Config> {
   nudgeAnnouncedAction?: boolean;
   /** Test/rollout hook: run this turn through the OMB-owned Agent Runtime. */
   nativeAgentEngine?: AgentEngine;
+  /** Optional protocol adapter for text-only helpers (titles/summaries). Defaults to OpenAI chat-completions via complete(). */
+  modelAdapter?: ModelAdapter;
 }
 
 const usageFrom = (usage: CompletionJson["usage"]): Usage | null =>
@@ -977,6 +979,16 @@ export function createNativeTurnRuntime<Config>(options: RuntimeOptions<Config>)
     nativeTurnRuntime: { sendTurn },
     generateText: async (prompt, { signal, onUsage, model: named } = {}) => {
       const model = named ?? options.generateModel?.() ?? options.models().default;
+      if (options.modelAdapter) {
+        let text = "";
+        let reasoning = "";
+        for await (const event of options.modelAdapter.generate({ messages: [{ role: "user", content: prompt }], model, tools: [], signal: signal ?? new AbortController().signal })) {
+          if (event.type === "content.delta" && event.kind === "assistant_text") text += event.delta;
+          if (event.type === "content.delta" && event.kind === "reasoning_text") reasoning += event.delta;
+          if (event.type === "usage" && onUsage) onUsage({ model, input: event.input, output: event.output });
+        }
+        return text.trim() ? text : reasoning;
+      }
       const { text, reasoning, toolCalls } = await complete([{ role: "user", content: prompt }], model, false, signal, undefined, [], onUsage);
       if (toolCalls.length) throw new ChatProtocolError("provider returned tool calls to a text-only helper");
       return text.trim() ? text : reasoning;
