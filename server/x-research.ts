@@ -402,7 +402,7 @@ export function tregAuthHeaders(credential: ServiceCredential): Record<string, s
 /** `url` and `token` are the relay's (OMB_CLOUD_X_URL, or a desktop's from its Cloud sign-in), or, with `own`, treg's
  * own base URL and the person's treg key. */
 export function createXRelayClient(options: { url: string; token: string; own?: boolean; fetcher?: typeof fetch; timeoutMs?: number }): XResearchClient {
-  const fetcher = options.fetcher ?? fetch;
+  const resolveFetcher = () => options.fetcher ?? fetch;
   const base = options.url.replace(/\/+$/, "");
   const timeoutMs = options.timeoutMs ?? X_CLIENT_TIMEOUT_MS;
   const auth = tregAuthHeaders({ token: options.token, api: base, included: options.own !== true });
@@ -413,7 +413,7 @@ export function createXRelayClient(options: { url: string; token: string; own?: 
     let raw: string;
     let headers: Headers;
     try {
-      const response = await fetcher(`${base}${path}`, {
+      const response = await resolveFetcher()(`${base}${path}`, {
         method: "POST",
         headers: { ...auth, accept: "application/json", "content-type": "application/json" },
         body: JSON.stringify(body),

@@ -141,7 +141,7 @@ export interface AnthropicModelAdapterConfig {
 }
 
 export function createAnthropicModelAdapter(config: AnthropicModelAdapterConfig): ModelAdapter {
-  const fetcher = config.fetcher ?? fetch;
+  const resolveFetcher = () => config.fetcher ?? fetch;
   const apiUrl = config.apiUrl.replace(/\/+$/, "");
   const version = config.anthropicVersion ?? "2023-06-01";
 
@@ -182,7 +182,7 @@ export function createAnthropicModelAdapter(config: AnthropicModelAdapterConfig)
       try {
         let response: Response;
         try {
-          response = await fetcher(`${apiUrl}/messages`, {
+          response = await resolveFetcher()(`${apiUrl}/messages`, {
             method: "POST",
             headers: {
               "x-api-key": config.apiKey,

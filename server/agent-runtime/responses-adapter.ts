@@ -55,7 +55,7 @@ export interface ResponsesModelAdapterConfig {
 }
 
 export function createResponsesModelAdapter(config: ResponsesModelAdapterConfig): ModelAdapter {
-  const fetcher = config.fetcher ?? fetch;
+  const resolveFetcher = () => config.fetcher ?? fetch;
   const baseUrl = config.apiUrl.replace(/\/+$/, "");
 
   return {
@@ -77,7 +77,7 @@ export function createResponsesModelAdapter(config: ResponsesModelAdapterConfig)
       try {
         let response: Response;
         try {
-          response = await fetcher(`${baseUrl}/responses`, {
+          response = await resolveFetcher()(`${baseUrl}/responses`, {
             method: "POST",
             headers: { authorization: `Bearer ${config.apiKey}`, "content-type": "application/json" },
             body: JSON.stringify(payload),

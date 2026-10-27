@@ -114,7 +114,7 @@ export interface GeminiModelAdapterConfig {
 }
 
 export function createGeminiModelAdapter(config: GeminiModelAdapterConfig): ModelAdapter {
-  const fetcher = config.fetcher ?? fetch;
+  const resolveFetcher = () => config.fetcher ?? fetch;
   const baseUrl = config.apiUrl.replace(/\/+$/, "");
 
   return {
@@ -152,7 +152,7 @@ export function createGeminiModelAdapter(config: GeminiModelAdapterConfig): Mode
       try {
         let response: Response;
         try {
-          response = await fetcher(`${baseUrl}/models/${encodeURIComponent(request.model)}:${endpoint}`, {
+          response = await resolveFetcher()(`${baseUrl}/models/${encodeURIComponent(request.model)}:${endpoint}`, {
             method: "POST",
             headers: { "content-type": "application/json", "x-goog-api-key": config.apiKey },
             body: JSON.stringify(payload),

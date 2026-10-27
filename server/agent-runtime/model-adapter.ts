@@ -218,7 +218,7 @@ function finalizeToolCalls(pending: Map<number, PendingToolCall>, requestStarted
  * only: no capability execution, no run state, and no credentials in logs.
  */
 export function createOpenAICompatibleModelAdapter(config: OpenAICompatibleModelAdapterConfig): ModelAdapter {
-  const fetcher = config.fetcher ?? fetch;
+  const resolveFetcher = () => config.fetcher ?? fetch;
 
   return {
     providerId: config.providerId,
@@ -253,7 +253,7 @@ export function createOpenAICompatibleModelAdapter(config: OpenAICompatibleModel
           ...(request.tools.length ? { tools: wireTools(request.tools) } : {}),
         });
         try {
-          response = await fetcher(`${config.apiUrl.replace(/\/+$/, "")}/chat/completions`, {
+          response = await resolveFetcher()(`${config.apiUrl.replace(/\/+$/, "")}/chat/completions`, {
             method: "POST",
             headers: {
               authorization: `Bearer ${config.apiKey}`,

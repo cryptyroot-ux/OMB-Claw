@@ -135,7 +135,7 @@ function relayError(status: number, body: unknown): XResearchError {
  * relay. One retry, with the same Idempotency-Key, when a call's answer is lost on the way or treg says it is still
  * running; anything else is answered once. */
 export function createResearchClient(credential: ServiceCredential, options: { fetcher?: typeof fetch; timeoutMs?: number; retryDelayMs?: number } = {}): ResearchClient {
-  const fetcher = options.fetcher ?? fetch;
+  const resolveFetcher = () => options.fetcher ?? fetch;
   const base = credential.api.replace(/\/+$/, "");
   const own = !credential.included;
   const timeoutMs = options.timeoutMs ?? TIMEOUT_MS;
@@ -143,7 +143,7 @@ export function createResearchClient(credential: ServiceCredential, options: { f
   async function send(method: string, path: string, init: { body?: string; headers?: Record<string, string> } = {}) {
     let response: Response;
     try {
-      response = await fetcher(`${base}${path}`, {
+      response = await resolveFetcher()(`${base}${path}`, {
         method,
         headers: { ...tregAuthHeaders(credential), accept: "application/json", ...(init.body === undefined ? {} : { "content-type": "application/json" }), ...init.headers },
         ...(init.body === undefined ? {} : { body: init.body }),
@@ -240,10 +240,10 @@ export interface TregKeyCheck {
 
 /** Settings' check of a treg key: who the key belongs to, then its team's balance. Two free account reads. */
 export async function checkTregKey(key: string, options: { api: string; fetcher?: typeof fetch; timeoutMs?: number }): Promise<TregKeyCheck> {
-  const fetcher = options.fetcher ?? fetch;
+  const resolveFetcher = () => options.fetcher ?? fetch;
   const base = options.api.replace(/\/+$/, "");
   const read = async (path: string) => {
-    const response = await fetcher(`${base}${path}`, {
+    const response = await resolveFetcher()(`${base}${path}`, {
       headers: { "x-treg-token": key, accept: "application/json" }, redirect: "error", signal: AbortSignal.timeout(options.timeoutMs ?? 10_000),
     });
     return { status: response.status, body: parsed(await readCapped(response).catch(() => "")) };
