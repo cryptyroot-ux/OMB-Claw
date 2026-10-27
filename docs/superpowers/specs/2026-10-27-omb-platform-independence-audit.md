@@ -231,3 +231,24 @@ Phase 4 cleanup (partial): key-rejection marking (noteKeyRejected) has been move
 
 Phase 5 (done): independence proof = native-only.e2e.test.ts (sealed PATH, no external engine process, agent_runs completed, MCP tool executed, artifact created). Eval report = evals/runners/run-evals.ts produces reproducible JSON report with resolve rate, model rounds, tool calls, wall time, request count, compactions, recovery_required (latest: 100% resolve, 1/1 task). External benchmarks (SWE-bench Verified, Terminal-Bench, CodeClash, ProgramBench) remain for future work; the harness skeleton exists under evals/.
 
+Phase B/C/D progress (2026-10-28):
+- Tool search (deferred MCP tool discovery) — done.
+- Hooks (PreToolUse/PostToolUse/PreCompact) — done.
+- Concurrent read-only tools — done.
+- Background compaction precompute (OpenCode-style) — done.
+- Native file tools (read/edit/write/glob/grep) — done.
+- Native shell (bash) with sandbox modes (read-only/workspace-write/full) — done.
+- Native git operations (status/diff/log/add/commit/branch/checkout/init) — done.
+- Worktree isolation (worktree-add/remove/list) — done.
+- Native web (fetch/search) — done.
+- Capability runtime (CompositeCapabilityRuntime + CapabilityProvider + SessionCapabilityProvider + SkillCapabilityProvider) — done.
+- 4 protocol adapters (OpenAI, Anthropic, Gemini, Responses) — done.
+- Capability probe (heuristic) + live probe (probeLive) — done.
+- Checkpoints before mutating tools + run.checkpoint_available event — done.
+- Fallback provider chains (try next on terminal failure) — done.
+
+Deferred (large/external):
+- Session tree (Pi-style JSONL tree, branch summary) — large data model change.
+- Retire legacy loop (migrate 40+ openai-chat.test.ts to native path) — high-risk.
+- Live capability probe testing — needs real API keys.
+- External benchmarks (SWE-bench, Terminal-Bench, CodeClash, ProgramBench) — needs datasets/network/Docker.
