@@ -239,7 +239,7 @@ function httpErrorDetail(body: string, limit = 500): string {
       }
     }
   }
-  if (!message || message === "unknown error") return body.slice(0, limit);
+  if (!message || message === "unknown error") return "";
   const errObj = (json?.error && typeof json.error === "object") ? json.error as Record<string, unknown> : null;
   const code = errObj?.code;
   const suffix = typeof code === "string" && /^[a-z][a-z0-9_]*$/.test(code) ? ` (${code})` : "";
@@ -326,9 +326,9 @@ export function createOpenAICompatibleModelAdapter(config: OpenAICompatibleModel
               ? "The model provider does not support tools"
               : tooLarge
                 ? "The model request exceeded the provider's size limit"
-                : `${label} HTTP ${response.status}${detail ? `: ${httpErrorDetail(detail)}` : ""}`,
+                : `${label} HTTP ${response.status}${httpErrorDetail(detail) ? `: ${httpErrorDetail(detail)}` : ""}`,
             code,
-            false,  // HTTP errors are not retried (legacy path treats them as ChatProtocolError)
+            false,
             false,
             emitted,
             tooLarge ? Buffer.byteLength(payload) : undefined,

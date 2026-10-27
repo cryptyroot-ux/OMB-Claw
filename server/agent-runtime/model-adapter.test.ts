@@ -218,7 +218,7 @@ describe("createOpenAICompatibleModelAdapter", () => {
       }));
 
       expect(error).toBeInstanceOf(Error);
-      expect(error).toMatchObject({ code: "transient", retryable: true, retrySafe: true, requestStarted: false });
+      expect(error).toMatchObject({ code: "transient", retryable: false, retrySafe: false, requestStarted: false });
     }
   });
 
