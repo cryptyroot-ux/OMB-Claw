@@ -239,7 +239,8 @@ function httpErrorDetail(body: string, limit = 500): string {
       }
     }
   }
-  if (!message || message === "unknown error") return "";
+  if (!json) return body.slice(0, limit);
+  if (!message || message === "unknown error") return body.slice(0, limit);
   const errObj = (json?.error && typeof json.error === "object") ? json.error as Record<string, unknown> : null;
   const code = errObj?.code;
   const suffix = typeof code === "string" && /^[a-z][a-z0-9_]*$/.test(code) ? ` (${code})` : "";

@@ -385,7 +385,7 @@ export function createAgentEngine(dependencies: {
           let allowTools = true;
           let sizeRetries = 0;
           while (modelRounds < MAX_MODEL_ROUNDS) {
-            signal.throwIfAborted();
+                        signal.throwIfAborted();
             if (control.steers.length) {
               for (const text of control.steers.splice(0)) messages.push({ role: "user", content: text });
               precomputed = null;
@@ -589,7 +589,13 @@ export function createAgentEngine(dependencies: {
                 if (!modelCall.id.trim() || seenCallIds.has(modelCall.id)) throw new AgentRuntimeError("invalid_tool_call", "The model reused or omitted a tool-call ID");
                 seenCallIds.add(modelCall.id);
                 const descriptor = toolDescriptors.find((item) => item.name === modelCall.name || item.id === modelCall.name);
-                if (!descriptor) throw new AgentRuntimeError("capability_not_granted", `The model requested an unavailable capability: ${modelCall.name}`);
+                if (!descriptor) {
+                  if (modelCall.name === "tool_output_read") throw new AgentRuntimeError("capability_not_granted", `The model requested an unavailable capability: ${modelCall.name}`);
+                  emit(request.threadId, { type: "tool.result", runId, callId: modelCall.id, result: { callId: modelCall.id, ok: false, content: `Unknown capability: ${modelCall.name}`, error: "not_found" } });
+                  messages.push({ role: "tool", content: JSON.stringify({ ok: false, result: `Unknown capability: ${modelCall.name}` }), toolCallId: modelCall.id });
+                  capabilityFailure = true;
+                  continue;
+                }
                 batch.push({
                   descriptor,
                   call: { runId, callId: modelCall.id, capabilityId: descriptor.id, arguments: modelCall.arguments, botId: request.botId, threadId: request.threadId },
@@ -761,7 +767,7 @@ export function createAgentEngine(dependencies: {
               continue;
             }
             control.finishing = true;
-            if (capabilityFailure && !request.nudgeAnnouncedAction) {
+            if (capabilityFailure) {
               const maxCorrective = request.toolErrorCorrectiveRounds ?? 0;
               if (correctiveRounds < maxCorrective) {
                 correctiveRounds += 1;

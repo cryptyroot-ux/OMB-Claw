@@ -15,6 +15,7 @@ import { ToolSearchCapabilityProvider } from "./tool-search-capability-provider.
 import { NativeShellCapabilityProvider } from "./native-shell-capability-provider.ts";
 import { workspaceDir } from "../workspace.ts";
 import type { AgentEngine, CapabilityGrant, CapabilitySession } from "./contracts.ts";
+import { plainFailureMessage } from "../drivers/engine-errors.ts";
 
 export interface NativeSteerState {
   queue: string[];
@@ -31,6 +32,7 @@ export interface NativeTurnContext {
   engine: AgentEngine;
   driverKind: string;
   apiUrl: string;
+  httpErrorLabel: string;
   toolsEnabled: () => boolean;
   computerUse: boolean;
   nudgeAnnouncedAction: boolean;
@@ -64,7 +66,7 @@ export async function runNativeTurn(context: NativeTurnContext): Promise<void> {
       context.emit({
         ...context.base(turn.threadId, turnId),
         type: "runtime.error",
-        message: context.safeText(failure).slice(0, 2_000),
+        message: context.safeText(plainFailureMessage(context.httpErrorLabel === "upstream" ? "upstream" : context.httpErrorLabel, failure)).slice(0, 2_000),
         terminal: !abort.signal.aborted,
       });
     }

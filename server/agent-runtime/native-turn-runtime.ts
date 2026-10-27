@@ -606,6 +606,7 @@ export function createNativeTurnRuntime<Config>(options: RuntimeOptions<Config>)
         engine: nativeEngine,
         driverKind: options.driverKind,
         apiUrl: options.apiUrl,
+        httpErrorLabel: options.httpErrorLabel,
         toolsEnabled: () => options.tools !== false,
         computerUse: options.computerUse === true,
         nudgeAnnouncedAction: options.nudgeAnnouncedAction === true,

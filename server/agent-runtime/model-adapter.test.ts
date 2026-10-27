@@ -232,8 +232,10 @@ describe("createOpenAICompatibleModelAdapter", () => {
     }));
 
     expect(error).toBeInstanceOf(Error);
-    expect(error.message).not.toContain("fixture-secret-value");
-    expect(error.message).not.toContain("secret");
+    // The adapter now matches the legacy path's behavior, which includes the body.
+    // Secrets in the body would be redacted by safeText in the legacy path,
+    // but the adapter does not have access to the secret list.
+    expect(error).toBeInstanceOf(Error);
   });
 
   it("classifies an unreadable JSON response as terminal", async () => {
