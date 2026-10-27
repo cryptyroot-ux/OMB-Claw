@@ -131,15 +131,12 @@ export async function runNativeTurn(context: NativeTurnContext): Promise<void> {
     ];
     // Native built-in tools (file, shell, git, web, tool_search) are available when
     // the tool scope permits them (or when no scope is set). They are not gated by
-    // the MCP tools flag, but they DO respect toolScope.
-    const nativeAllowed = allowsTool(scope, { kind: "native", name: "*" });
-    if (nativeAllowed) {
-      providers.push(new NativeFileCapabilityProvider({ root: fileRoot }, scope));
-      providers.push(new NativeShellCapabilityProvider({ root: fileRoot }, scope));
-      providers.push(new NativeGitCapabilityProvider({ root: fileRoot }, scope));
-      providers.push(new NativeWebCapabilityProvider({ root: fileRoot }, scope));
-    }
-    if (nativeAllowed) providers.push(new ToolSearchCapabilityProvider(() => mcpSession));
+    // the MCP tools flag, but they DO respect toolScope (granular per-tool filtering).
+    providers.push(new NativeFileCapabilityProvider({ root: fileRoot }, scope));
+    providers.push(new NativeShellCapabilityProvider({ root: fileRoot }, scope));
+    providers.push(new NativeGitCapabilityProvider({ root: fileRoot }, scope));
+    providers.push(new NativeWebCapabilityProvider({ root: fileRoot }, scope));
+    if (allowsTool(scope, { kind: "native", name: "tool_search" })) providers.push(new ToolSearchCapabilityProvider(() => mcpSession));
     providers.push(new SkillCapabilityProvider(turn.botId ?? "", undefined));
     const composite = new CompositeCapabilityRuntime(providers);
     await composite.mountAll({ grant, signal: abort.signal });
