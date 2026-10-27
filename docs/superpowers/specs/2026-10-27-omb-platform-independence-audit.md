@@ -224,3 +224,8 @@ Phase 1, smallest safe step:
 This preserves the working engine while correcting the ownership boundary. It is the difference
 between “OMB has a native loop inside a driver” and “OMB is a native agent platform with replaceable
 providers and capabilities.”
+
+Phase 4 (done, acceptance met): supportedAgentDrivers contains only API providers (engine-support.test.ts green, including anthropic/gemini/openai-responses); sealed-PATH test (PATH=/nonexistent-native-agent-path) passes native-only.e2e.test.ts; no agent-engine child process is spawned by the native loop. External CLI/ACP code remains quarantined in server/drivers (not registered, not launched).
+
+Phase 4 cleanup (deferred): the legacy driver loop in native-turn-runtime.ts is still present but unreachable in production (API drivers set agentEngine "omb-native"). Full removal requires moving key-rejection (noteKeyRejected/rejectsKey) into each model adapter and migrating 40+ openai-chat.test.ts cases to the native path. Deferred per audit ("delete only after the suite is green").
+
