@@ -12,6 +12,7 @@ import type {
 } from "./contracts.ts";
 import { rejectsToolsParameter } from "../tool-rejection.ts";
 import { refusesRequestSize } from "../request-size.ts";
+import { rejectsKey, noteKeyRejected } from "../key-rejections.ts";
 
 export interface OpenAICompatibleModelAdapterConfig {
   providerId: string;
@@ -272,6 +273,7 @@ export function createOpenAICompatibleModelAdapter(config: OpenAICompatibleModel
           const transient = response.status === 408 || response.status === 429 || response.status >= 500;
           const toolsRejected = !transient && rejectsToolsParameter(response.status, detail);
           const tooLarge = !transient && !toolsRejected && refusesRequestSize(response.status, detail);
+          if (rejectsKey(response.status, detail)) noteKeyRejected(config.apiUrl, config.apiKey);
           const code: ModelAdapterErrorCode = toolsRejected
             ? "unsupported_tools"
             : tooLarge

@@ -2,6 +2,7 @@
 // only: no capability execution, no run state, and no credentials in logs.
 // Conforms to the protocol-neutral ModelAdapter contract so the OMB engine
 // loop is unchanged.
+import { rejectsKey, noteKeyRejected } from "../key-rejections.ts";
 import type {
   CapabilityDescriptor,
   ModelAdapter,
@@ -205,6 +206,7 @@ export function createAnthropicModelAdapter(config: AnthropicModelAdapterConfig)
         if (!response.ok) {
           const detail = await response.text().catch(() => "");
           const transient = response.status === 408 || response.status === 429 || response.status >= 500;
+          if (rejectsKey(response.status, detail)) noteKeyRejected(config.apiUrl, config.apiKey);
           const code: ModelAdapterErrorCode = transient ? "transient" : response.status === 400 || response.status === 422 ? "invalid_request" : "terminal";
           throw new AnthropicAdapterError(
             `Anthropic returned HTTP ${response.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`,
