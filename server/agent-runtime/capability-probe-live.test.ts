@@ -19,6 +19,7 @@ describe("probeLive", () => {
   it("returns error when the adapter throws", async () => {
     const adapter = {
       generate: async function* () {
+        yield { type: "content.delta", kind: "assistant_text", delta: "" };
         throw new Error("auth failed");
       },
     };
@@ -28,10 +29,8 @@ describe("probeLive", () => {
   });
 
   it("detects tool support when the tool probe succeeds", async () => {
-    let callCount = 0;
     const adapter = {
       generate: async function* (req: any) {
-        callCount++;
         if (req.tools?.length) {
           yield { type: "tool_calls", calls: [{ id: "noop", name: "noop", arguments: {} }] };
         }
