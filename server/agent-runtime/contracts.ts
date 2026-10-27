@@ -259,6 +259,8 @@ export interface AgentRunRequest {
   };
   /** Nudge a reply that announces a step and ends without a tool call, at most three times per run. */
   readonly nudgeAnnouncedAction?: boolean;
+  /** Number of corrective rounds allowed when a tool call fails. */
+  readonly toolErrorCorrectiveRounds?: number;
   /** Optional hook runner (PreToolUse/PostToolUse/PreCompact/Stop). */
   readonly hooks?: {
     run(event: "pre_tool_use" | "post_tool_use" | "pre_compact" | "stop" | "session_start" | "session_end", context: { readonly runId: string; readonly threadId: string; readonly botId: string; readonly capabilityId?: string; readonly callId?: string; readonly arguments?: unknown; readonly result?: { readonly ok: boolean; readonly content: string }; readonly reason?: string }): Promise<{ readonly allow: boolean; readonly messages: ReadonlyArray<string>; readonly modifiedArguments?: unknown }>;

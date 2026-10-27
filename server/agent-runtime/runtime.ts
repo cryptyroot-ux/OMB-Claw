@@ -254,6 +254,7 @@ export function createAgentEngine(dependencies: {
         const seenCallIds = new Set<string>();
         let nudges = 0;
         let callsAtNudge = -1;
+        let correctiveRounds = 0;
 
         const progress = () => dependencies.store.updateRunProgress(runId, { modelRounds, toolCalls, updatedAt: Date.now() });
         const updateStatus = (next: AgentRunStatus, code?: string) => {
@@ -760,6 +761,15 @@ export function createAgentEngine(dependencies: {
               continue;
             }
             control.finishing = true;
+            if (capabilityFailure && !request.nudgeAnnouncedAction) {
+              const maxCorrective = request.toolErrorCorrectiveRounds ?? 0;
+              if (correctiveRounds < maxCorrective) {
+                correctiveRounds += 1;
+                messages.push({ role: "assistant", content: responseText || "" }, { role: "user", content: "[OpenMausBot: a tool call in this turn failed (its result is marked ok:false). Re-run the failed operations with corrected inputs where possible, check the results, then give your final answer. Do not report results you did not get.]" });
+                precomputed = null;
+                continue;
+              }
+            }
             if (capabilityFailure) throw new AgentRuntimeError("capability_failed", "One or more capabilities failed or were denied; the run is not a success receipt");
             if (request.nudgeAnnouncedAction && toolDescriptors.length > 0 && announcesAction(responseText)) {
               if (nudges >= MAX_ANNOUNCEMENT_NUDGES) {

@@ -216,6 +216,7 @@ export async function runNativeTurn(context: NativeTurnContext): Promise<void> {
       ...(turn.budget ? { budget: turn.budget } : {}),
       ...(nativeImages.length ? { images: nativeImages } : {}),
       ...(context.nudgeAnnouncedAction ? { nudgeAnnouncedAction: true } : {}),
+      ...(turn.toolErrorCorrectiveRounds !== undefined ? { toolErrorCorrectiveRounds: turn.toolErrorCorrectiveRounds } : {}),
     });
     context.steer.impl = (text) => engine.steer(handle.runId, text);
     for (const text of context.steer.queue.splice(0)) await context.steer.impl(text);
