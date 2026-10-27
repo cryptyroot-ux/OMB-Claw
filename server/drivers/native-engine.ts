@@ -1,5 +1,5 @@
 import type { ModelCatalog } from "../contracts.ts";
-import type { AgentEngine, ModelCapabilities } from "../agent-runtime/contracts.ts";
+import type { AgentEngine, ModelAdapter, ModelCapabilities } from "../agent-runtime/contracts.ts";
 import { createAgentEngine } from "../agent-runtime/runtime.ts";
 import { createOpenAICompatibleModelAdapter } from "../agent-runtime/model-adapter.ts";
 import { probeCapabilities } from "../agent-runtime/capability-probe.ts";
@@ -18,10 +18,12 @@ export interface NativeChatEngineOptions {
   readonly toolsEnabled?: boolean;
   readonly imageInput?: (modelId: string) => boolean;
   readonly audioInput?: (modelId: string) => boolean;
+  /** Optional pre-built adapter (e.g. Anthropic Messages). When provided, the OpenAI-compatible adapter is not created. */
+  readonly modelAdapter?: ModelAdapter;
 }
 
 export function createNativeChatEngine(options: NativeChatEngineOptions): AgentEngine {
-  const adapter = createOpenAICompatibleModelAdapter({
+  const adapter = options.modelAdapter ?? createOpenAICompatibleModelAdapter({
     providerId: options.providerId,
     apiUrl: options.apiUrl,
     apiKey: options.apiKey,
