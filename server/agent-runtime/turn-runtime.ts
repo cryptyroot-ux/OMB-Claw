@@ -129,13 +129,17 @@ export async function runNativeTurn(context: NativeTurnContext): Promise<void> {
     const providers: any[] = [
       new SessionCapabilityProvider("mcp", "mcp", mcpSession, "MCP tools"),
     ];
-    // Native built-in tools (file, shell, git, web, tool_search) are always available,
-    // like Claude Code's built-in tools. They are not gated by the MCP tools flag.
-    providers.push(new NativeFileCapabilityProvider({ root: fileRoot }));
-    providers.push(new NativeShellCapabilityProvider({ root: fileRoot }));
-    providers.push(new NativeGitCapabilityProvider({ root: fileRoot }));
-    providers.push(new NativeWebCapabilityProvider({ root: fileRoot }));
-    providers.push(new ToolSearchCapabilityProvider(() => mcpSession));
+    // Native built-in tools (file, shell, git, web, tool_search) are available when
+    // the tool scope permits them (or when no scope is set). They are not gated by
+    // the MCP tools flag, but they DO respect toolScope.
+    const nativeAllowed = allowsTool(scope, { kind: "native", name: "*" });
+    if (nativeAllowed) {
+      providers.push(new NativeFileCapabilityProvider({ root: fileRoot }));
+      providers.push(new NativeShellCapabilityProvider({ root: fileRoot }));
+      providers.push(new NativeGitCapabilityProvider({ root: fileRoot }));
+      providers.push(new NativeWebCapabilityProvider({ root: fileRoot }));
+    }
+    if (nativeAllowed) providers.push(new ToolSearchCapabilityProvider(() => mcpSession));
     providers.push(new SkillCapabilityProvider(turn.botId ?? "", undefined));
     const composite = new CompositeCapabilityRuntime(providers);
     await composite.mountAll({ grant, signal: abort.signal });
@@ -219,6 +223,7 @@ export async function runNativeTurn(context: NativeTurnContext): Promise<void> {
       ...(nativeImages.length ? { images: nativeImages } : {}),
       ...(context.nudgeAnnouncedAction ? { nudgeAnnouncedAction: true } : {}),
       ...(turn.toolErrorCorrectiveRounds !== undefined ? { toolErrorCorrectiveRounds: turn.toolErrorCorrectiveRounds } : {}),
+      ...(turn.toolScope !== undefined ? { toolScope: turn.toolScope } : {}),
     });
     context.steer.impl = (text) => engine.steer(handle.runId, text);
     for (const text of context.steer.queue.splice(0)) await context.steer.impl(text);

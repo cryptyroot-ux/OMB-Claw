@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "../drivers/retry.ts";
 import { announcesAction, MAX_ANNOUNCEMENT_NUDGES, NUDGE_ANNOUNCED_ACTION } from "./announcement.ts";
 import { workspaceDir } from "../workspace.ts";
+import { parseToolScope, allowsTool } from "../../shared/tool-scope.ts";
 import { snapshot as createCheckpoint } from "../checkpoints.ts";
 import { createRunScopedCapabilitySession, TOOL_OUTPUT_READ_CAPABILITY } from "./capability-runtime.ts";
 import type {
@@ -385,6 +386,7 @@ export function createAgentEngine(dependencies: {
           let allowTools = true;
           let sizeRetries = 0;
           while (modelRounds < MAX_MODEL_ROUNDS) {
+            capabilityFailure = false;
                         signal.throwIfAborted();
             if (control.steers.length) {
               for (const text of control.steers.splice(0)) messages.push({ role: "user", content: text });
@@ -591,8 +593,14 @@ export function createAgentEngine(dependencies: {
                 const descriptor = toolDescriptors.find((item) => item.name === modelCall.name || item.id === modelCall.name);
                 if (!descriptor) {
                   if (modelCall.name === "tool_output_read") throw new AgentRuntimeError("capability_not_granted", `The model requested an unavailable capability: ${modelCall.name}`);
-                  emit(request.threadId, { type: "tool.result", runId, callId: modelCall.id, result: { callId: modelCall.id, ok: false, content: `Unknown capability: ${modelCall.name}`, error: "not_found" } });
-                  messages.push({ role: "tool", content: JSON.stringify({ ok: false, result: `Unknown capability: ${modelCall.name}` }), toolCallId: modelCall.id });
+                  const parsed = parseToolScope(request.toolScope);
+                  // Check both native and mcp identities
+                  const nativeExcluded = parsed.ok && !allowsTool(parsed.scope, { kind: "native", name: modelCall.name });
+                  const mcpExcluded = parsed.ok && !allowsTool(parsed.scope, { kind: "mcp", server: "fx", name: modelCall.name });
+                  const excluded = nativeExcluded && mcpExcluded;
+                  const msg = excluded ? "tool selection excludes this tool" : `Unknown capability: ${modelCall.name}`;
+                  emit(request.threadId, { type: "tool.result", runId, callId: modelCall.id, result: { callId: modelCall.id, ok: false, content: msg, error: "not_found" } });
+                  messages.push({ role: "tool", content: JSON.stringify({ ok: false, result: msg }), toolCallId: modelCall.id });
                   capabilityFailure = true;
                   continue;
                 }
@@ -727,7 +735,7 @@ export function createAgentEngine(dependencies: {
 
                 dependencies.store.settleCapabilityCall(runId, call.callId, result.ok ? "succeeded" : "failed", Date.now());
                 if (!result.ok) capabilityFailure = true;
-                emit(request.threadId, { type: "tool.result", runId, callId: call.callId, result });
+                                emit(request.threadId, { type: "tool.result", runId, callId: call.callId, result });
                 if (request.hooks) {
                   void request.hooks.run("post_tool_use", { runId, threadId: request.threadId, botId: request.botId, capabilityId: call.capabilityId, callId: call.callId, arguments: call.arguments, result: { ok: result.ok, content: result.content } });
                 }

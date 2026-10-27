@@ -259,6 +259,8 @@ export interface AgentRunRequest {
   };
   /** Nudge a reply that announces a step and ends without a tool call, at most three times per run. */
   readonly nudgeAnnouncedAction?: boolean;
+  /** Tool scope for filtering available tools. */
+  readonly toolScope?: unknown;
   /** Number of corrective rounds allowed when a tool call fails. */
   readonly toolErrorCorrectiveRounds?: number;
   /** Optional hook runner (PreToolUse/PostToolUse/PreCompact/Stop). */
