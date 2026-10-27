@@ -1,5 +1,5 @@
 // A self-hosted server cannot replace itself, so this only says whether a newer release exists and how this install is updated.
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, sep } from "node:path";
 
 export const LATEST_RELEASE_URL = "https://api.github.com/repos/cryptyroot-ux/OMB-Claw/commits/feature/native-agent-engine";
@@ -93,7 +93,22 @@ export function createUpdateChecker(options: {
     inflight ??= (async () => {
       try {
         const response = await fetchRelease(LATEST_RELEASE_URL, {
-          headers: { accept: "application/vnd.github+json", "user-agent": "openmausbot-update-check" },
+          headers: {
+            accept: "application/vnd.github+json",
+            "user-agent": "openmausbot-update-check",
+            ...(() => {
+              // Try env vars first
+              const envToken = process.env.GITHUB_PERSONAL_ACCESS_TOKEN || process.env.GITHUB_TOKEN;
+              if (envToken) return { authorization: `token ${envToken}` };
+              // Fall back to gh CLI config
+              try {
+                const yaml = readFileSync("/root/.config/gh/hosts.yml", "utf8");
+                const match = yaml.match(/oauth_token:\s*(\S+)/);
+                if (match) return { authorization: `token ${match[1]}` };
+              } catch {}
+              return {};
+            })(),
+          },
           signal: AbortSignal.timeout(8_000),
         });
         if (!response.ok) throw new Error(`GitHub answered ${response.status}`);
