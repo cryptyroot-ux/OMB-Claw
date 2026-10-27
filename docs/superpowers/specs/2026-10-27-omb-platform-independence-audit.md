@@ -229,3 +229,5 @@ Phase 4 (done, acceptance met): supportedAgentDrivers contains only API provider
 
 Phase 4 cleanup (deferred): the legacy driver loop in native-turn-runtime.ts is still present but unreachable in production (API drivers set agentEngine "omb-native"). Full removal requires moving key-rejection (noteKeyRejected/rejectsKey) into each model adapter and migrating 40+ openai-chat.test.ts cases to the native path. Deferred per audit ("delete only after the suite is green").
 
+Phase 5 (done): independence proof = native-only.e2e.test.ts (sealed PATH, no external engine process, agent_runs completed, MCP tool executed, artifact created). Eval report = evals/runners/run-evals.ts produces reproducible JSON report with resolve rate, model rounds, tool calls, wall time, request count, compactions, recovery_required (latest: 100% resolve, 1/1 task). External benchmarks (SWE-bench Verified, Terminal-Bench, CodeClash, ProgramBench) remain for future work; the harness skeleton exists under evals/.
+
