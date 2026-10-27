@@ -1,0 +1,8 @@
+{
+  "id": "native-text-reply",
+  "description": "The bot replies through the native loop without an external engine.",
+  "prompt": "Say hello through the native loop.",
+  "expectedReply": "Native eval verified.",
+  "providerReply": "Native eval verified.",
+  "budget": { "maxTokens": 100000, "maxWallTimeMs": 60000 }
+}

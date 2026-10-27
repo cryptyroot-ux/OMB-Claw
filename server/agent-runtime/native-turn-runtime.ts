@@ -621,6 +621,7 @@ export function createNativeTurnRuntime<Config>(options: RuntimeOptions<Config>)
       return { turnId };
     }
 
+    throw new Error("The legacy driver loop is retired; API drivers must use the OMB native engine (agentEngine: \"omb-native\").");
     void (async () => {
       let tools: ChatToolSession | undefined;
       const usage: Usage = { input: 0, output: 0 };
