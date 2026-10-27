@@ -2,7 +2,7 @@
 import { existsSync } from "node:fs";
 import { join, sep } from "node:path";
 
-export const LATEST_RELEASE_URL = "https://api.github.com/repos/milind-soni/OpenMausBot/releases/latest";
+export const LATEST_RELEASE_URL = "https://api.github.com/repos/cryptyroot-ux/OMB-Claw/releases/latest";
 const CACHE_MS = 60 * 60_000;
 
 /** "managed" is a hosted or Cloud server that is updated for its owner. */
@@ -13,7 +13,7 @@ export const UPDATE_COMMANDS: Partial<Record<InstallKind, { command: string; res
   docker: { command: "docker compose pull omb && docker compose up -d", restart: false },
   podman: { command: "git pull && cd deploy/podman && PODMAN_COMPOSE_PROVIDER=podman-compose podman compose --env-file .env -f compose.yaml up -d --build", restart: false },
   npm: { command: "npm install -g openmausbot@latest", restart: true },
-  git: { command: "git pull && pnpm install", restart: true },
+  git: { command: "git pull && pnpm install && pnpm build", restart: true },
 };
 
 export function installKind(input: {
