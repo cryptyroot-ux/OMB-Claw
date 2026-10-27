@@ -108,7 +108,9 @@ export function WelcomeFlow({
   const [importBusy, setImportBusy] = useState(false);
   const aiStepShown = useRef(initialBeat === "engines");
   const aiReady = !aiStepShown.current && state.instances.some(engineReady);
-  const beats = beatsFor({ dictation: dictation ?? capabilities.dictation.available, reel, hosted, setupImport: detection !== null, cloud: offer !== null, aiReady });
+  const hasCliAgents = state.instances.some((i) => i.install);
+  const hasInstances = state.instances.length > 0;
+  const beats = beatsFor({ dictation: dictation ?? capabilities.dictation.available, reel, hosted, setupImport: detection !== null, cloud: offer !== null, aiReady, hasCliAgents, hasInstances });
   const [beat, setBeat] = useState<BeatId>(() => (initialBeat && beats.includes(initialBeat) ? initialBeat : "hello"));
   const [mascot, setMascot] = useState<MausState>(MASCOT_FOR_BEAT[beat]);
   const [motion, setMotion] = useState<{ kind: Motion; key: number }>({ kind: "blink", key: 0 });

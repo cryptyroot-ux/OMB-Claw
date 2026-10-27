@@ -81,7 +81,9 @@ export function EnginesBeat({
   }, [refresh]);
 
   const connected = state.instances.find(engineReady);
-  const { recommended, others } = aiChoices(state.instances.filter((instance) => instance.install && !engineReady(instance)));
+  const installable = state.instances.filter((instance) => instance.install && !engineReady(instance));
+  const { recommended, others } = aiChoices(installable);
+  const hasInstallableAgents = installable.length > 0 || state.instances.some((i) => i.install);
 
   useEffect(() => {
     if (connected) {
@@ -99,6 +101,10 @@ export function EnginesBeat({
         <p role="status" data-ai-connected className="animate-rise mt-4 flex items-center gap-2 text-[13px] text-success">
           <Check size={14} strokeWidth={2.5} aria-hidden="true" />
           {t("onboarding.engines.connected", { name: connected.displayName })}
+        </p>
+      ) : !hasInstallableAgents ? (
+        <p className="animate-rise mt-4 text-[13px] text-ink-secondary">
+          {t("onboarding.engines.noCliAgents")}
         </p>
       ) : recommended ? (
         <div data-ai-recommended={recommended.instanceId} className="animate-rise mt-4 rounded-xl border border-hairline/40 bg-card" style={staggerIndex(1)}>
