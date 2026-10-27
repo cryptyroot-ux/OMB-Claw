@@ -1,5 +1,5 @@
 // A self-hosted server cannot replace itself, so this only says whether a newer release exists and how this install is updated.
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, sep } from "node:path";
 
 export const LATEST_RELEASE_URL = "https://api.github.com/repos/cryptyroot-ux/OMB-Claw/commits/feature/native-agent-engine";
@@ -102,7 +102,6 @@ export function createUpdateChecker(options: {
               if (envToken) return { authorization: `token ${envToken}` };
               // Fall back to gh CLI config
               try {
-                const { readFileSync } = require("node:fs");
                 const yaml = readFileSync("/root/.config/gh/hosts.yml", "utf8");
                 const match = yaml.match(/oauth_token:\s*(\S+)/);
                 if (match) return { authorization: `token ${match[1]}` };
