@@ -211,6 +211,7 @@ import {
   type RequestOutcome,
   type RuntimeEvent,
   type SendTurnInput,
+  type TurnStartResult,
   type SteerOutcome,
   newId,
 } from "./contracts.ts";
@@ -10620,7 +10621,7 @@ async function runClaimedGroupMemberTurn(
       config: [roomSystem.stable, cwd, readyBot.modelSelection, turnApprovalMode, roomToolScope, roomUserMcp, integrations],
       window: roomWindow, tail: roomTail, wrap: (body) => withTurnClock(clock, withRecalled(roomRecalled, body + roomShareNote.text)),
     });
-    guardTurnDispatch(roomShareNote.after((instance.nativeTurnRuntime?.sendTurn ?? instance.adapter.sendTurn)({
+    guardTurnDispatch(roomShareNote.after(((instance.nativeTurnRuntime?.sendTurn ?? instance.adapter.sendTurn) as (input: SendTurnInput) => Promise<TurnStartResult>)({
         ...roomSession.send,
         threadId,
         botId: readyBot.id,
