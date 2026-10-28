@@ -15,6 +15,8 @@ export interface IntelligenceConfig {
   readonly overrides?: Partial<Record<ComplexityLevel, ReadonlyArray<ProviderModelRef>>>;
   readonly maxRetries?: number;
   readonly maxCostUsd?: number;
+  /** Optional thread log sink for intelligence decisions. */
+  readonly log?: (entry: { readonly kind: string; readonly detail: string }) => void;
 }
 
 export interface IntelligenceDecision {
@@ -50,6 +52,7 @@ export function createIntelligenceLayer(config: IntelligenceConfig) {
       const candidate = route.candidates[0] ?? input.primaryModel;
       const costEstimate = estimateCost({ messages: input.messages, model: candidate.modelId });
       const allowed = config.maxCostUsd === undefined || costEstimate.estimatedCostUsd <= config.maxCostUsd;
+      config.log?.({ kind: "intelligence.decide", detail: JSON.stringify({ complexity: route.complexity, tier: route.tier, allowed, estimatedCostUsd: costEstimate.estimatedCostUsd }) });
       return {
         complexity: route.complexity,
         route,
