@@ -19,6 +19,8 @@ export interface NativeChatEngineOptions {
   readonly toolsEnabled?: boolean;
   readonly imageInput?: (modelId: string) => boolean;
   readonly audioInput?: (modelId: string) => boolean;
+  /** Label used in HTTP error messages, e.g. "xAI" or "upstream". */
+  readonly httpErrorLabel?: string;
   /** Optional pre-built adapter (e.g. Anthropic Messages). When provided, the OpenAI-compatible adapter is not created. */
   readonly modelAdapter?: ModelAdapter;
 }

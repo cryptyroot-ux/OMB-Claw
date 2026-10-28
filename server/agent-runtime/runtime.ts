@@ -388,7 +388,7 @@ export function createAgentEngine(dependencies: {
           while (modelRounds < MAX_MODEL_ROUNDS) {
             signal.throwIfAborted();
             if (control.steers.length) {
-              for (const text of control.steers.splice(0)) messages.push({ role: "user", content: text });
+              messages.push({ role: "user", content: control.steers.splice(0).join("\n\n") });
               precomputed = null;
             }
             if (runBudget?.maxWallTimeMs && Date.now() - runStartedAt > runBudget.maxWallTimeMs) {
