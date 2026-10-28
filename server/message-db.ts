@@ -64,7 +64,10 @@ function open(): DatabaseSync {
     CREATE INDEX IF NOT EXISTS messages_failed_at ON messages(at) WHERE ${FAILED_CALL};
     CREATE TABLE IF NOT EXISTS thread_state (
       thread_id TEXT PRIMARY KEY,
-      active_leaf_id TEXT
+      active_leaf_id TEXT,
+      parent_thread_id TEXT,
+      branch_point_message_id TEXT,
+      branch_summary TEXT
     );
     CREATE TABLE IF NOT EXISTS chat_followups (
       id TEXT PRIMARY KEY,
@@ -865,6 +868,190 @@ export function setActiveLeaf(threadId: string, leafId: string | null): void {
         "ON CONFLICT(thread_id) DO UPDATE SET active_leaf_id = excluded.active_leaf_id",
     )
     .run(threadId, leafId);
+}
+
+/** Session Tree: fork a child thread from a parent, copying messages up to (and including) fromMessageId. */
+export interface ForkResult {
+  readonly newThreadId: string;
+  readonly copiedMessageCount: number;
+  readonly parentThreadId: string;
+  readonly branchPointMessageId: string | null;
+}
+
+export function forkThread(
+  parentThreadId: string,
+  fromMessageId: string | null,
+  newThreadId: string,
+): ForkResult {
+  // Validate parent exists.
+  const parentExists = db()
+    .prepare("SELECT 1 FROM thread_state WHERE thread_id = ?")
+    .get(parentThreadId) as { thread_id: string } | undefined;
+  if (!parentExists) throw new Error(`Parent thread ${parentThreadId} does not exist`);
+
+  // Child must not already exist.
+  const childExists = db()
+    .prepare("SELECT 1 FROM thread_state WHERE thread_id = ?")
+    .get(newThreadId) as { thread_id: string } | undefined;
+  if (childExists) throw new Error(`Thread ${newThreadId} already exists`);
+
+  // Determine the branch point: if fromMessageId is given, copy messages up to and including it;
+  // otherwise copy all messages from the parent.
+  let branchPointMessageId: string | null = null;
+  let copiedMessageCount = 0;
+
+  db().exec("BEGIN");
+  try {
+    let activeLeafId: string | null = null;
+
+    if (fromMessageId) {
+      // Verify the message exists in the parent thread.
+      const msg = db()
+        .prepare("SELECT id FROM messages WHERE thread_id = ? AND id = ?")
+        .get(parentThreadId, fromMessageId) as { id: string } | undefined;
+      if (!msg) throw new Error(`Message ${fromMessageId} not found in parent thread ${parentThreadId}`);
+      branchPointMessageId = fromMessageId;
+      activeLeafId = fromMessageId;
+
+      // Copy messages up to and including the branch point message, ordered by rowid.
+      const rows = db()
+        .prepare(
+          "SELECT id, at, role, kind, text, json FROM messages WHERE thread_id = ? AND rowid <= " +
+          "(SELECT rowid FROM messages WHERE thread_id = ? AND id = ?) ORDER BY rowid",
+        )
+        .all(parentThreadId, parentThreadId, fromMessageId) as Array<{
+          id: string; at: number; role: string; kind: string; text: string | null; json: string;
+        }>;
+
+      const insert = db().prepare(
+        "INSERT INTO messages (thread_id, id, at, role, kind, text, json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      );
+      for (const row of rows) {
+        insert.run(newThreadId, row.id, row.at, row.role, row.kind, row.text, row.json);
+      }
+      copiedMessageCount = rows.length;
+    } else {
+      // Copy all messages from the parent.
+      const rows = db()
+        .prepare("SELECT id, at, role, kind, text, json FROM messages WHERE thread_id = ? ORDER BY rowid")
+        .all(parentThreadId) as Array<{
+          id: string; at: number; role: string; kind: string; text: string | null; json: string;
+        }>;
+
+      const insert = db().prepare(
+        "INSERT INTO messages (thread_id, id, at, role, kind, text, json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      );
+      for (const row of rows) {
+        insert.run(newThreadId, row.id, row.at, row.role, row.kind, row.text, row.json);
+      }
+      copiedMessageCount = rows.length;
+      activeLeafId = rows.at(-1)?.id ?? null;
+    }
+
+    // Record the branch relationship on the child thread.
+    db()
+      .prepare(
+        "INSERT INTO thread_state (thread_id, active_leaf_id, parent_thread_id, branch_point_message_id) " +
+        "VALUES (?, ?, ?, ?) " +
+        "ON CONFLICT(thread_id) DO UPDATE SET " +
+        "active_leaf_id = excluded.active_leaf_id, " +
+        "parent_thread_id = excluded.parent_thread_id, " +
+        "branch_point_message_id = excluded.branch_point_message_id",
+      )
+      .run(newThreadId, activeLeafId, parentThreadId, branchPointMessageId);
+
+    db().exec("COMMIT");
+  } catch (error) {
+    db().exec("ROLLBACK");
+    throw error;
+  }
+
+  return {
+    newThreadId,
+    copiedMessageCount,
+    parentThreadId,
+    branchPointMessageId,
+  };
+}
+
+export interface ThreadBranchInfo {
+  readonly threadId: string;
+  readonly parentThreadId: string | null;
+  readonly branchPointMessageId: string | null;
+  readonly branchSummary: string | null;
+  readonly activeLeafId: string | null;
+}
+
+export function getThreadBranch(threadId: string): ThreadBranchInfo | undefined {
+  const row = db()
+    .prepare(
+      "SELECT thread_id, parent_thread_id, branch_point_message_id, branch_summary, active_leaf_id " +
+      "FROM thread_state WHERE thread_id = ?",
+    )
+    .get(threadId) as {
+      thread_id: string;
+      parent_thread_id: string | null;
+      branch_point_message_id: string | null;
+      branch_summary: string | null;
+      active_leaf_id: string | null;
+    } | undefined;
+  if (!row) return undefined;
+  return {
+    threadId: row.thread_id,
+    parentThreadId: row.parent_thread_id,
+    branchPointMessageId: row.branch_point_message_id,
+    branchSummary: row.branch_summary,
+    activeLeafId: row.active_leaf_id,
+  };
+}
+
+export function setThreadBranch(
+  threadId: string,
+  options: {
+    readonly parentThreadId?: string | null;
+    readonly branchPointMessageId?: string | null;
+    readonly branchSummary?: string | null;
+  },
+): void {
+  const current = getThreadBranch(threadId);
+  if (!current) throw new Error(`Thread ${threadId} does not exist`);
+
+  db()
+    .prepare(
+      "UPDATE thread_state SET " +
+      "parent_thread_id = COALESCE(?, parent_thread_id), " +
+      "branch_point_message_id = COALESCE(?, branch_point_message_id), " +
+      "branch_summary = COALESCE(?, branch_summary) " +
+      "WHERE thread_id = ?",
+    )
+    .run(
+      options.parentThreadId ?? null,
+      options.branchPointMessageId ?? null,
+      options.branchSummary ?? null,
+      threadId,
+    );
+}
+
+/** List all child threads forked from a parent thread. */
+export function listThreadChildren(parentThreadId: string): string[] {
+  const rows = db()
+    .prepare("SELECT thread_id FROM thread_state WHERE parent_thread_id = ? ORDER BY thread_id")
+    .all(parentThreadId) as { thread_id: string }[];
+  return rows.map((row) => row.thread_id);
+}
+
+/** Get the full ancestor chain for a thread, from root to leaf. */
+export function getThreadAncestry(threadId: string): string[] {
+  const chain: string[] = [];
+  let current: string | null = threadId;
+  let depth = 0;
+  while (current && depth < 100) {
+    chain.push(current);
+    const info = getThreadBranch(current);
+    current = info?.parentThreadId ?? null;
+    depth++;
+  }
+  return chain.reverse();
 }
 
 /** Each conversation's newest stored row, by its row number, and how many rows it has: what Send to My Cloud compares with what it sent. */
