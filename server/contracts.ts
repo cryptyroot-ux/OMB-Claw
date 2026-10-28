@@ -107,6 +107,8 @@ export interface SendTurnInput {
   approvalMode?: ApprovalMode;
   /** Fresh owner selection, independent of execution approval and resume state. */
   toolScope?: ToolScope;
+  /** Shell sandbox mode: workspace-write | read-only | full | custom. Per-turn override. */
+  sandboxMode?: unknown;
   /** A guest turn: no shell or command execution, no reads outside its folder. Sent only to drivers whose guestTurns is "confined". */
   guestConfined?: boolean;
   /** Why this turn is confined, in the owner's words, for a refusal to end with. */

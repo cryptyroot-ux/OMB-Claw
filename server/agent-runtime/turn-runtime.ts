@@ -15,6 +15,7 @@ import { NativeWebCapabilityProvider } from "./native-web-capability-provider.ts
 import { ToolSearchCapabilityProvider } from "./tool-search-capability-provider.ts";
 import { NativeShellCapabilityProvider } from "./native-shell-capability-provider.ts";
 import { workspaceDir } from "../workspace.ts";
+import { parseSandboxMode } from "./sandbox.ts";
 import type { AgentEngine, CapabilityGrant, CapabilitySession, CapabilityProvider, CapabilityDescriptor, CapabilityCall, CapabilityResult } from "./contracts.ts";
 import { plainFailureMessage } from "../drivers/engine-errors.ts";
 
@@ -239,7 +240,11 @@ export async function runNativeTurn(context: NativeTurnContext): Promise<void> {
     // the tool scope permits them (or when no scope is set). They are not gated by
     // the MCP tools flag, but they DO respect toolScope (granular per-tool filtering).
     providers.push(new NativeFileCapabilityProvider({ root: fileRoot }, scope));
-    providers.push(new NativeShellCapabilityProvider({ root: fileRoot }, scope));
+    const rawSandboxMode = (turn as unknown as { sandboxMode?: unknown }).sandboxMode ?? process.env.OMB_SANDBOX_MODE ?? "workspace-write";
+    const sandboxMode = parseSandboxMode(rawSandboxMode) ?? "workspace-write";
+    const envAllow = process.env.OMB_SANDBOX_ALLOWED_COMMANDS;
+    const allowedCommands = envAllow ? envAllow.split(",").map((s) => s.trim()).filter(Boolean) : undefined;
+    providers.push(new NativeShellCapabilityProvider({ root: fileRoot, sandboxMode, allowedCommands }, scope));
     providers.push(new NativeGitCapabilityProvider({ root: fileRoot }, scope));
     providers.push(new NativeWebCapabilityProvider({ root: fileRoot }, scope));
     if (allowsTool(scope, { kind: "native", name: "tool_search" })) providers.push(new ToolSearchCapabilityProvider(() => mcpSession));
