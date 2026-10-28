@@ -6,6 +6,17 @@ import { workspaceDir } from "../workspace.ts";
 import { parseToolScope, allowsTool } from "../../shared/tool-scope.ts";
 import { snapshot as createCheckpoint } from "../checkpoints.ts";
 import { createRunScopedCapabilitySession, TOOL_OUTPUT_READ_CAPABILITY } from "./capability-runtime.ts";
+import {
+  compactionKeepTokens,
+  contextBudget,
+  estimateMessagesTokens,
+  planRecovery,
+  chooseBodyCut,
+  compactionTranscript,
+  compactMessages,
+  SUMMARY_PROMPT,
+  buildCompactionRecord,
+} from "./compaction.ts";
 import type {
   AgentEngine,
   AgentEvent,
@@ -27,6 +38,15 @@ const MAX_MODEL_ROUNDS = 64;
 const MAX_TOOL_CALLS = 200;
 /** Mirrors the chat image budget: 32 MiB of encoded base64 per run. */
 const MAX_ENCODED_IMAGE_BYTES = Math.ceil(32 * 1024 * 1024 / 3) * 4;
+
+const COMPACTION_MIN_MESSAGES = 6;
+const COMPACTION_MAX_PER_RUN = 3;
+const COMPACTION_MIN_MESSAGE_GAP = 4;
+const SUMMARY_MAX_CHARS = 4_000;
+const TOOL_OUTPUT_PROMPT_CHARS = 8_000;
+/** Above this length, a tool output string is truncated on request_too_large recovery. */
+const SHORT_TOOL_CHARS = 2_000;
+const OMITTED_IMAGE = "[image omitted to fit the provider's size limit]";
 
 class AgentRuntimeError extends Error {
   readonly code: string;
@@ -62,120 +82,33 @@ function modelEventFailure(message: string): AgentRuntimeError {
   return new AgentRuntimeError("invalid_model_response", message);
 }
 
-const OMITTED_IMAGE = "[image omitted to fit the provider's size limit]";
-const SHORT_TOOL_CHARS = 2_000;
-const COMPACTION_MIN_MESSAGES = 6;
-const COMPACTION_MAX_PER_RUN = 3;
-const COMPACTION_MIN_MESSAGE_GAP = 4;
-const DEFAULT_CONTEXT_WINDOW = 128_000;
-const SUMMARY_CLIP_CHARS = 2_000;
-const SUMMARY_TRANSCRIPT_CHARS = 120_000;
-const TOOL_OUTPUT_PROMPT_CHARS = 8_000;
-const SUMMARY_MAX_CHARS = 4_000;
-
-/** Proportional keep: 25% of context window, clamped to [8k, 32k]. */
-export function compactionKeepTokens(contextWindow: { readonly status: "known"; readonly value: number } | { readonly status: "unknown" }): number {
-  const window = contextWindow.status === "known" ? contextWindow.value : DEFAULT_CONTEXT_WINDOW;
-  return Math.min(32_000, Math.max(8_000, Math.floor(window * 0.25)));
-}
-
-const SUMMARY_PROMPT = [
-  "You are compacting an agent conversation so it can continue in a smaller context window.",
-  "Preserve, in this order: the person's objective and constraints; decisions already made; files read or changed (exact paths); commands, tests, and their results; unresolved errors and risks; exact identifiers the next turn needs.",
-  "Drop greetings, repeated reasoning, and superseded plans. Do not invent facts. Output only the summary, in compact Markdown.",
-].join(" ");
-
-function estimateTokens(value: unknown): number {
-  return Math.ceil(JSON.stringify(value).length / 4);
-}
-
-function contextBudget(contextWindow: { readonly status: "known"; readonly value: number } | { readonly status: "unknown" }): { readonly window: number; readonly trigger: number } {
-  const window = contextWindow.status === "known" ? contextWindow.value : DEFAULT_CONTEXT_WINDOW;
-  const reserve = Math.max(16_000, Math.floor(window * 0.15));
-  return { window, trigger: Math.max(Math.floor(window / 2), window - reserve) };
-}
-
-/** Keep the newest messages within the token budget, then move the cut so the kept slice never starts with an
- * orphan tool result. An assistant carrying tool calls may start the slice; its results follow it. */
-function chooseCompactionCut(messages: readonly ModelMessage[], keepTokens: number): number {
-  let total = 0;
-  let cut = messages.length;
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const tokens = estimateTokens(messages[index]);
-    if (total + tokens > keepTokens) break;
-    total += tokens;
-    cut = index;
-  }
-  while (cut > 0 && messages[cut]?.role === "tool") cut--;
-  return cut;
-}
-
-function compactionTranscript(messages: readonly ModelMessage[]): string {
-  const lines: string[] = [];
-  let used = 0;
-  for (const message of messages) {
-    const content = typeof message.content === "string" ? message.content : JSON.stringify(message.content);
-    const text = content.length > SUMMARY_CLIP_CHARS ? `${content.slice(0, SUMMARY_CLIP_CHARS)}…` : content;
-    const calls = message.toolCalls?.length
-      ? `\nTOOL CALLS: ${message.toolCalls.map((call) => `${call.name}(${JSON.stringify(call.arguments)})`).join("; ")}`
-      : "";
-    const line = `${message.role.toUpperCase()}: ${text}${calls}`;
-    if (used + line.length > SUMMARY_TRANSCRIPT_CHARS) break;
-    lines.push(line);
-    used += line.length;
-  }
-  return lines.join("\n\n");
-}
-
-/** Graduated shrink: attempt 0 keeps last 8 non-system messages + user turn; attempt 1 keeps last 4 + drops images; attempt 2 keeps last 2. */
-function shrinkMessages(messages: readonly ModelMessage[], attempt: number): ModelMessage[] | null {
-  const system = messages.filter((message) => message.role === "system");
-  const rest = messages.filter((message) => message.role !== "system");
-  const lastUser = rest.findLastIndex((message) => message.role === "user");
-  if (lastUser < 0) return null;
-
-  let windowSize: number;
-  switch (attempt) {
-    case 0:
-      windowSize = 8;
-      break;
-    case 1:
-      windowSize = 4;
-      break;
-    case 2:
-      windowSize = 2;
-      break;
-    default:
-      windowSize = 0; // keep only the user and any assistant/tool messages after
-  }
-
-  const keepFrom = Math.max(0, lastUser - windowSize);
-  const dropped = keepFrom;
-  const kept = rest.slice(keepFrom).map((message) => {
+/** Shorten content that may exceed the provider's request size:
+ * converts image parts to a placeholder text and truncates long tool outputs.
+ * Returns new message objects (message content is read-only).
+ */
+function shortenMessageContents(messages: readonly ModelMessage[]): ModelMessage[] {
+  return messages.map((message) => {
     const content = message.content;
     if (content === null || content === undefined) return message;
-    let shrunk: string | readonly ModelContentPart[];
     if (Array.isArray(content)) {
-      shrunk = content.map((part) =>
-        part.type === "image"
-          ? { type: "text" as const, text: OMITTED_IMAGE }
-          : part
-      );
-    } else {
-      // string content
-      shrunk =
-        message.role === "tool" && content.length > SHORT_TOOL_CHARS
-          ? `${content.slice(0, SHORT_TOOL_CHARS)}\n[tool output shortened to fit the provider's size limit]`
-          : content;
+      if (content.some((part) => part.type === "image")) {
+        return {
+          ...message,
+          content: content.map((part) =>
+            part.type === "image" ? { type: "text" as const, text: OMITTED_IMAGE } : part,
+          ),
+        };
+      }
+      return message;
     }
-    return { ...message, content: shrunk };
+    if (message.role === "tool" && content.length > SHORT_TOOL_CHARS) {
+      return {
+        ...message,
+        content: `${content.slice(0, SHORT_TOOL_CHARS)}\n[tool output shortened to fit the provider's size limit]`,
+      };
+    }
+    return message;
   });
-
-  const note: ModelMessage[] = dropped > 0
-    ? [{ role: "assistant", content: `[${dropped} earlier message${dropped === 1 ? "" : "s"} omitted to fit the provider's size limit; the full history remains in the app.]` }]
-    : [];
-
-  return [...system, ...note, ...kept];
 }
 
 export function createAgentEngine(dependencies: {
@@ -292,19 +225,21 @@ export function createAgentEngine(dependencies: {
           const precomputeTrigger = Math.floor(budget.trigger * 0.7);
           let precomputed: { readonly summary: string; readonly cut: number; readonly messageCount: number; readonly model: string } | null = null;
           let overflowRejected = false;
+          const allowSummarize = true;
+          const allowShrink = true;
+          let sizeRetries = 0;
 
           const firePrecompute = (): void => {
-            if (precomputed || overflowRejected) return;
             if (compactions >= COMPACTION_MAX_PER_RUN || messages.length < COMPACTION_MIN_MESSAGES) return;
             const body = messages.filter((m) => m.role !== "system");
-            const cut = chooseCompactionCut(body, keepTokens);
+            const cut = chooseBodyCut(body, keepTokens, currentModelId);
             if (cut <= 0 || cut >= body.length - 1) return;
             const older = body.slice(0, cut);
             if (older.length < 2) return;
             const transcript = compactionTranscript(older);
             if (!transcript.trim()) return;
             const snapshotCount = messages.length;
-            const snapshotModel = request.providerModel.modelId;
+            const snapshotModel = currentModelId;
             void (async () => {
               let summary = "";
               try {
@@ -328,63 +263,66 @@ export function createAgentEngine(dependencies: {
             })();
           };
 
-          const compact = async (trigger: "auto" | "overflow"): Promise<boolean> => {
-            lastCompactAttempt = messages.length;
-            precomputed = null;
+          /** Compact the message list in place using the multi-tier compaction engine.
+           * Returns true when compaction was applied, false when no compaction was possible. */
+          const doCompact = async (trigger: "auto" | "overflow"): Promise<boolean> => {
             if (trigger === "overflow") overflowRejected = true;
             if (compactions >= COMPACTION_MAX_PER_RUN || messages.length < COMPACTION_MIN_MESSAGES) return false;
-            const system = messages.filter((message) => message.role === "system");
-            const body = messages.filter((message) => message.role !== "system");
-            const cut = chooseCompactionCut(body, keepTokens);
-            if (cut <= 0 || cut >= body.length - 1) return false;
-            const older = body.slice(0, cut);
-            if (older.length < 2) return false;
-            const transcript = compactionTranscript(older);
-            if (!transcript.trim()) return false;
-            modelRounds++;
-            progress();
-            let summary = "";
-            try {
-              for await (const event of adapter.generate({
-                messages: [
-                  { role: "system", content: SUMMARY_PROMPT },
-                  { role: "user", content: transcript },
-                ],
-                model: currentModelId,
-                tools: [],
-                signal,
-              })) {
-                if (event.type === "content.delta" && event.kind === "assistant_text") summary += event.delta;
-              }
-            } catch {
-              return false;
-            }
-            summary = summary.trim();
-            if (!summary) return false;
-            // Cap summary to SUMMARY_MAX_CHARS to avoid exceeding budget
-            if (summary.length > SUMMARY_MAX_CHARS) summary = summary.slice(0, SUMMARY_MAX_CHARS) + "…";
-            const firstKept = body[cut]!;
-            const summaryMessage: ModelMessage = {
-              role: firstKept.role === "assistant" ? "user" : "assistant",
-              content: `[Earlier conversation summary — ${older.length} message${older.length === 1 ? "" : "s"} compacted to fit the model window. The full transcript remains in the app.]\n\n${summary}`,
-            };
-            messages.splice(0, messages.length, ...system, summaryMessage, ...body.slice(cut));
-            compactions++;
-            const tokenEstimate = estimateTokens(messages);
-            dependencies.store.recordCompaction?.({
-              runId,
-              sequence: compactions,
-              summary,
-              firstKeptIndex: cut,
-              tokenEstimate,
-              trigger,
-              createdAt: Date.now(),
+            const result = compactMessages(messages, {
+              keepTokens,
+              maxTokens: budget.window,
+              modelId: currentModelId,
+              allowSummarize,
+              allowShrink,
+              minKeepMessages: 2,
+              bridgeMessages: 2,
             });
-            emit(request.threadId, { type: "run.compacted", runId, summary, firstKeptIndex: cut, tokenEstimate, trigger });
+            if (result.droppedCount === 0) return false;
+            // Prefer precomputed summary if still valid.
+            let summary = "";
+            const pc = precomputed;
+            if (pc && pc.messageCount === messages.length && pc.model === currentModelId && pc.cut > 0) {
+              const body = messages.filter((m) => m.role !== "system");
+              if (pc.cut < body.length - 1) {
+                const older = body.slice(0, pc.cut);
+                if (older.length >= 2) summary = pc.summary;
+              }
+            }
+            if (!summary) {
+              modelRounds++;
+              progress();
+              try {
+                for await (const event of adapter.generate({
+                  messages: [{ role: "system", content: SUMMARY_PROMPT }, { role: "user", content: compactionTranscript(result.droppedMessages) }],
+                  model: currentModelId,
+                  tools: [],
+                  signal,
+                })) {
+                  if (event.type === "content.delta" && event.kind === "assistant_text") summary += event.delta;
+                }
+              } catch {
+                return false;
+              }
+              summary = summary.trim();
+              if (!summary) return false;
+              if (summary.length > SUMMARY_MAX_CHARS) summary = summary.slice(0, SUMMARY_MAX_CHARS) + "…";
+            }
+            const summaryMessage: ModelMessage = {
+              role: "user",
+              content: `[Earlier conversation summary — ${result.droppedMessages.length} message${result.droppedMessages.length === 1 ? "" : "s"} compacted to fit the context window. The full transcript remains in the app.]\n\n${summary}`,
+            };
+            const system = messages.filter((m: ModelMessage) => m.role === "system");
+            const newMessages: ModelMessage[] = [...system, summaryMessage, ...result.messages.filter((m: ModelMessage) => m.role !== "system")];
+            messages.splice(0, messages.length, ...newMessages);
+            compactions++;
+            lastCompactAttempt = messages.length;
+            const tokenEstimate = estimateMessagesTokens(messages, currentModelId);
+            dependencies.store.recordCompaction?.(buildCompactionRecord(runId, compactions, summary, result.messages.length, tokenEstimate, trigger, Date.now()));
+            emit(request.threadId, { type: "run.compacted", runId, summary, firstKeptIndex: system.length + 1, tokenEstimate, trigger });
+            precomputed = null;
             return true;
           };
           let allowTools = true;
-          let sizeRetries = 0;
           while (modelRounds < MAX_MODEL_ROUNDS) {
             signal.throwIfAborted();
             if (control.steers.length) {
@@ -397,7 +335,7 @@ export function createAgentEngine(dependencies: {
             if (budgetExhausted) {
               throw new AgentRuntimeError("budget_exhausted", "Turn stopped at the configured token, cost, or time budget.");
             }
-            const tokenEst = estimateTokens(messages);
+            const tokenEst = estimateMessagesTokens(messages, currentModelId);
             // Fire background precompute early (OpenCode-style).
             // Precompute only while approaching (not yet over) the trigger, so we don't
             // fire a redundant summary call when compaction is already required now.
@@ -409,46 +347,26 @@ export function createAgentEngine(dependencies: {
               && messages.length - lastCompactAttempt >= COMPACTION_MIN_MESSAGE_GAP
               && (tokenEst > budget.trigger || lastReportedInputTokens > budget.trigger)
             ) {
-              // Prefer precomputed summary if still valid.
-              const pc = precomputed as { readonly summary: string; readonly cut: number; readonly messageCount: number; readonly model: string } | null;
-              if (pc && pc.messageCount === messages.length && pc.model === request.providerModel.modelId) {
-                const system = messages.filter((m) => m.role === "system");
-                const body = messages.filter((m) => m.role !== "system");
-                const cut = pc.cut;
-                if (cut > 0 && cut < body.length - 1) {
-                  const older = body.slice(0, cut);
-                  if (older.length >= 2) {
-                    const firstKept = body[cut]!;
-                    const summaryMessage: ModelMessage = {
-                      role: firstKept.role === "assistant" ? "user" : "assistant",
-                      content: `[Earlier conversation summary — ${older.length} message${older.length === 1 ? "" : "s"} compacted to fit the model window. The full transcript remains in the app.]\n\n${pc.summary}`,
-                    };
-                    messages.splice(0, messages.length, ...system, summaryMessage, ...body.slice(cut));
-                    compactions++;
-                    lastCompactAttempt = messages.length;
-                    const tokenEstimate = estimateTokens(messages);
-                    dependencies.store.recordCompaction?.({
-                      runId,
-                      sequence: compactions,
-                      summary: pc.summary,
-                      firstKeptIndex: cut,
-                      tokenEstimate,
-                      trigger: "auto",
-                      createdAt: Date.now(),
-                    });
-                    emit(request.threadId, { type: "run.compacted", runId, summary: pc.summary, firstKeptIndex: cut, tokenEstimate, trigger: "auto" });
-                  }
-                }
-                precomputed = null;
-              } else {
+              const recovery = planRecovery(tokenEst, budget.trigger, budget.window, {
+                compactions,
+                maxCompactions: COMPACTION_MAX_PER_RUN,
+                sizeRetries,
+                maxSizeRetries: 2,
+                allowSummarize,
+                allowShrink,
+              });
+              if (recovery.action === "compact" || recovery.action === "shrink") {
                 let allowCompact = true;
                 if (request.hooks) {
                   const hr = await request.hooks.run("pre_compact", { runId, threadId: request.threadId, botId: request.botId });
                   allowCompact = hr.allow;
                 }
-                if (allowCompact) await compact("auto");
-                precomputed = null;
+                if (allowCompact) await doCompact("auto");
+              } else if (recovery.action === "escalate") {
+                // All compaction strategies exhausted; try a fallback model or fail below.
+                overflowRejected = true;
               }
+              precomputed = null;
             }
             let toolDescriptors = allowTools ? runCapabilities.list(request.grant) : [];
             if (toolDescriptors.length > 0 && modelCapabilities.tools !== "supported") {
@@ -532,8 +450,21 @@ export function createAgentEngine(dependencies: {
                   && sizeRetries === 0
                   && !outputVisible
                   && !signal.aborted
-                  && await compact("overflow")
                 ) {
+                  overflowRejected = true;
+                  // Force shrink on the first rejection: aggressively drop older messages
+                  // and shorten remaining large content (images, long tool outputs).
+                  const result = compactMessages(messages, {
+                    keepTokens: 1,
+                    maxTokens: budget.window,
+                    modelId: currentModelId,
+                    allowSummarize: false,
+                    allowShrink: true,
+                    minKeepMessages: 1,
+                    bridgeMessages: 1,
+                  });
+                  const shortened = shortenMessageContents(result.messages);
+                  messages.splice(0, messages.length, ...shortened);
                   sizeRetries++;
                   precomputed = null;
                   continue;
@@ -546,12 +477,19 @@ export function createAgentEngine(dependencies: {
                   && !signal.aborted
                 ) {
                   overflowRejected = true;
-                  const shrunk = shrinkMessages(messages, sizeRetries);
-                  if (shrunk) {
-                    messages.splice(0, messages.length, ...shrunk);
-                    sizeRetries++;
-                    continue;
-                  }
+                  const result = compactMessages(messages, {
+                    keepTokens: 1,
+                    maxTokens: budget.window,
+                    modelId: currentModelId,
+                    allowSummarize: false,
+                    allowShrink: true,
+                    minKeepMessages: 1,
+                    bridgeMessages: 1,
+                  });
+                  const shortened = shortenMessageContents(result.messages);
+                  messages.splice(0, messages.length, ...shortened);
+                  sizeRetries++;
+                  continue;
                 }
                 const canRetry = isModelAdapterError(error)
                   && error.code === "transient"

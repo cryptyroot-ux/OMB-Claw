@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 
 // Shadow repos live under DATA_DIR, which server/testing/setup.ts points at a disposable home before config.ts loads.
-import { CHECKPOINTS_DIR, GC_EVERY_COMMITS, diffWorkingTree, refusalReason, release, snapshot } from "./checkpoints.ts";
+import { CHECKPOINTS_DIR, GC_EVERY_COMMITS, diffWorkingTree, refusalReason, release, rollback, snapshot } from "./checkpoints.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 
 const scratchDirs: string[] = [];
@@ -445,5 +445,48 @@ describe("diffWorkingTree", () => {
     const hash = await snapshot(bot, cwd, "turn bbbbbbbb");
     expect(await diffWorkingTree(bot, cwd, hash!)).toEqual({ changed: [], added: [], deleted: [] });
     expect(await diffWorkingTree(bot, homedir(), hash!)).toBeNull();
+  });
+});
+
+describe("rollback", () => {
+  it("restores the working tree to a previous checkpoint", async () => {
+    const { bot, cwd } = workspace();
+    writeFileSync(join(cwd, "a.txt"), "one");
+    const before = await snapshot(bot, cwd, "turn aaaaaaaa");
+    expect(before).toMatch(/^[0-9a-f]{40}$/);
+
+    writeFileSync(join(cwd, "a.txt"), "changed");
+    writeFileSync(join(cwd, "b.txt"), "new file");
+    expect(readFileSync(join(cwd, "a.txt"), "utf8")).toBe("changed");
+
+    expect(await rollback(bot, cwd, before!)).toBe(true);
+    expect(readFileSync(join(cwd, "a.txt"), "utf8")).toBe("one");
+    expect(existsSync(join(cwd, "b.txt"))).toBe(false);
+  });
+
+  it("returns false for an unknown hash", async () => {
+    const { bot, cwd } = workspace();
+    writeFileSync(join(cwd, "a.txt"), "one");
+    await snapshot(bot, cwd, "turn 1");
+    expect(await rollback(bot, cwd, "0000000000000000000000000000000000000000")).toBe(false);
+  });
+
+  it("returns false for a malformed hash", async () => {
+    const { bot, cwd } = workspace();
+    writeFileSync(join(cwd, "a.txt"), "one");
+    await snapshot(bot, cwd, "turn 1");
+    expect(await rollback(bot, cwd, "not-a-hash")).toBe(false);
+  });
+
+  it("returns false for a protected folder", async () => {
+    const { bot } = workspace();
+    expect(await rollback(bot, homedir(), "0000000000000000000000000000000000000000")).toBe(false);
+  });
+
+  it("cancels on abort signal", async () => {
+    const { bot, cwd } = workspace();
+    writeFileSync(join(cwd, "a.txt"), "one");
+    const before = await snapshot(bot, cwd, "turn 1");
+    expect(await rollback(bot, cwd, before!, AbortSignal.abort())).toBe(false);
   });
 });

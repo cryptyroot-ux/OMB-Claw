@@ -505,6 +505,38 @@ export async function release(botId: string, cwd: string, pin: string): Promise<
   }
 }
 
+/** Restore the working tree (and index) to a previous checkpoint's state.
+ * Best-effort: never throws into the turn path; returns false when the
+ * checkpoint is unavailable, the hash is invalid, or the restore fails.
+ */
+export async function rollback(botId: string, cwd: string, hash: string, signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) return false;
+  if (disabledBots.has(botId)) return false;
+  if (!(await gitAvailable())) return false;
+  if (!COMMIT_HASH.test(hash)) return false;
+  if (refusalReason(cwd) !== null) return false;
+  const folder = folderShadow(botId, cwd);
+  if (folder === null || disabledFolders.has(folder.shadow)) return false;
+  const { worktree, shadow } = folder;
+  try {
+    return await serialize(shadow, async () => {
+      const env = gitEnv(shadow, worktree);
+      await ensureShadow(worktree, env, shadow, signal);
+      // Confirm the commit exists before touching the worktree.
+      await runGit(["cat-file", "-e", `${hash}^{commit}`], worktree, env, signal);
+      // Restore index and working tree to the checkpoint commit for all tracked paths.
+      await runGit(["checkout", hash, "--", "."], worktree, env, signal);
+      // Drop untracked files/dirs added after the checkpoint (excludes still apply via .git/info/exclude).
+      await runGit(["clean", "-fd"], worktree, env, signal);
+      return true;
+    });
+  } catch (e) {
+    if (signal?.aborted) return false;
+    if (e instanceof GitTimeoutError && !signal?.aborted) disableFolder(shadow, botId, worktree, e instanceof Error ? e.message : String(e));
+    return false;
+  }
+}
+
 export interface CheckpointDiff {
   changed: string[];
   added: string[];

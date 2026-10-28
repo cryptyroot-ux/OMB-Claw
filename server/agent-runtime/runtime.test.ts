@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { compactionKeepTokens, createAgentEngine } from "./runtime.ts";
+import { createAgentEngine } from "./runtime.ts";
+import { compactionKeepTokens } from "./compaction.ts";
 import type {
   AgentEvent,
   AgentCompactionRecord,
