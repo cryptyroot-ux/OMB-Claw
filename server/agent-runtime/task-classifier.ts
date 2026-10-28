@@ -66,7 +66,7 @@ export function classifyTask(signals: TaskSignals): ComplexityLevel {
 
   // Complex keywords
   const keywordHits = COMPLEX_KEYWORDS.filter((p) => p.test(text)).length;
-  score += Math.min(keywordHits, 3);
+  score += Math.min(keywordHits * 2, 6);
 
   if (score >= 8) return "expert";
   if (score >= 6) return "complex";

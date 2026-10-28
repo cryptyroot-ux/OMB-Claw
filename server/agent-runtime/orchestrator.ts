@@ -34,6 +34,10 @@ type Gate = { readonly resolve: () => void; readonly reject: (reason: string) =>
 export function createOrchestrator(dependencies: {
   readonly engine: AgentEngine;
   readonly store: OrchestratorStore;
+  readonly intelligence?: {
+    readonly enabled: boolean;
+    readonly decide: (input: { text: string; messageCount?: number; toolCount?: number; hasImages?: boolean; hasCode?: boolean; messages: ReadonlyArray<{ content: string | null | undefined }>; primaryModel: import("./contracts.ts").ProviderModelRef }) => { readonly allowed: boolean; readonly reason?: string; readonly route: { readonly candidates: ReadonlyArray<import("./contracts.ts").ProviderModelRef> } };
+  };
 }): Orchestrator {
   const listeners = new Map<string, Set<(event: OrchestrationEvent) => void>>();
   const active = new Map<string, {
@@ -130,13 +134,38 @@ export function createOrchestrator(dependencies: {
         recordStep(planId, step, "running");
         emit(planId, { type: "step.started", planId, stepId: step.id });
 
+        // Intelligence Layer: classify, route, estimate cost before executing.
+        let providerModel = step.providerModel;
+        if (dependencies.intelligence?.enabled) {
+          const decision = dependencies.intelligence.decide({
+            text: step.text,
+            messages: buildMessagesWithContext(step, contextVariables).map((m) => ({ content: typeof m.content === "string" ? m.content : null })),
+            primaryModel: step.providerModel,
+          });
+          if (decision.route.candidates.length > 0) {
+            providerModel = decision.route.candidates[0]!;
+          }
+          if (!decision.allowed) {
+            recordStep(planId, step, "failed", {
+              stepId: step.id,
+              runId: "",
+              status: "failed",
+              error: decision.reason ?? "budget_exceeded",
+            });
+            emit(planId, { type: "step.failed", planId, stepId: step.id, error: decision.reason ?? "budget_exceeded" });
+            dependencies.store.updatePlanStatus(planId, "failed", Date.now());
+            emit(planId, { type: "plan.failed", planId, error: decision.reason ?? "budget_exceeded" });
+            return;
+          }
+        }
+
         // Build engine request from step.
         const engineRequest: AgentRunRequest = {
           botId: step.grant.botId,
           threadId: step.grant.threadId,
           text: step.text,
           messages: buildMessagesWithContext(step, contextVariables),
-          providerModel: step.providerModel,
+          providerModel,
           grant: step.grant,
           capabilities: step.capabilities,
           signal: controller.signal,
