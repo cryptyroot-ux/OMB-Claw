@@ -39,8 +39,24 @@ it("a real isolated server runs an OpenAI-compatible bot through the native loop
     let body = "";
     for await (const chunk of request) body += chunk;
     const parsed = JSON.parse(body) as typeof requests[number];
-    requests.push(parsed);
+    // Skip live-capability probe calls: they carry no real capability
+    // (tools: [] or only a trivial "noop" tool) and must not pollute the
+    // recorded request list or trip the native-tool assertion below.
+    const isProbeCall = !parsed.tools || parsed.tools.length === 0 || parsed.tools.every((t) => t.function.name === "noop");
+    if (!isProbeCall) requests.push(parsed);
     response.writeHead(200, { "content-type": "text/event-stream" });
+    if (isProbeCall) {
+      if (parsed.tools && parsed.tools.length > 0) {
+        // Tools probe: the model should call the noop tool; answer with a
+        // noop tool_calls event so the probe detects tools support.
+        response.write(frame({ tool_calls: [{ index: 0, id: "noop-call", type: "function", function: { name: "noop", arguments: "{}" } }] }, null));
+        response.end(frame({ tool_calls: [{ index: 0, id: null, type: null, function: { name: null, arguments: "" } }] }, "tool_calls") + "data: [DONE]\n\n");
+      } else {
+        // Streaming probe: just complete.
+        response.end(frame({ content: "ok" }, "stop") + "data: [DONE]\n\n");
+      }
+      return;
+    }
     const hasToolResult = parsed.messages.some((message) => message.role === "tool");
     if (hasToolResult) {
       response.end(frame({ content: "The native artifact was created." }, "stop") + "data: [DONE]\n\n");

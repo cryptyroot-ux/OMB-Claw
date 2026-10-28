@@ -232,9 +232,17 @@ export function createAgentEngine(dependencies: {
           let currentModelId = request.providerModel.modelId;
           // Live probe: verify tools/streaming against the real adapter before trusting static hints.
           // Cached per modelId; a failed probe falls back to static capabilities and retries next run.
+          // The probe must not block a turn indefinitely: if the adapter never answers
+          // (e.g. a test fixture that ends the response before sending a body), fall back
+          // to static capabilities and retry the probe on the next run.
           let liveCaps: LiveProbeResult | undefined;
           if (dependencies.probe && !liveProbeCache.has(currentModelId)) {
-            const probed = await dependencies.probe.run(adapter, currentModelId);
+            const probed = await Promise.race([
+              dependencies.probe.run(adapter, currentModelId),
+              new Promise<LiveProbeResult | null>((resolve) => {
+                setTimeout(() => resolve(null), 5_000);
+              }),
+            ]);
             if (probed) {
               liveProbeCache.set(currentModelId, probed);
               liveCaps = probed;
