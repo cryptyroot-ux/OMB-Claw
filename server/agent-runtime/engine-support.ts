@@ -1,11 +1,10 @@
 // This OMB build does not support external agent engines. Their drivers stay
 // in the tree but are not registered, so stored selections become unavailable
 // rather than launching a CLI or ACP process.
+// Opsi B: keep hermes + opencode (subscription unlimited) as external engines.
 const EXTERNAL_AGENT_ENGINES = new Set([
   "claudeAgent",
   "codex",
-  "opencodeGo",
-  "hermesAgent",
   "piAgent",
   "antigravityAgent",
   "customAcp",

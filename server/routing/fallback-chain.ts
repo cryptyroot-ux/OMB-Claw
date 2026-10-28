@@ -1,0 +1,146 @@
+// Fallback chain: try the primary model, then fallbacks in order, up to maxRetries attempts.
+import { appendNative } from "../drivers/native.ts";
+
+export interface FallbackChainOptions {
+  maxRetries?: number;
+  threadId?: string;
+  executor?: (model: string, input: unknown) => Promise<unknown>;
+}
+
+export class FallbackChain {
+  private executor: ((model: string, input: unknown) => Promise<unknown>) | undefined;
+  private readonly options: FallbackChainOptions;
+  /** Model that ultimately succeeded on the most recent execute() call. */
+  public lastSucceededModel: string | undefined;
+
+  static execute(...args: unknown[]): Promise<any> {
+    return new FallbackChain().execute(...args);
+  }
+
+  constructor(
+    executorOrOptions?: ((model: string, input: unknown) => Promise<unknown>) | FallbackChainOptions,
+    options?: FallbackChainOptions,
+  ) {
+    if (typeof executorOrOptions === "function") {
+      this.executor = executorOrOptions;
+      this.options = options ?? {};
+    } else {
+      this.executor = executorOrOptions?.executor;
+      this.options = executorOrOptions ?? {};
+      if (options) {
+        this.options = { ...this.options, ...options };
+        if (typeof options.executor === "function") this.executor = options.executor;
+      }
+    }
+  }
+
+  async execute(...args: unknown[]): Promise<any> {
+    let primaryModel: string;
+    let fallbackList: string[] = [];
+    const rest: unknown[] = [];
+
+    const first = args[0];
+    if (typeof first === "string") {
+      primaryModel = first;
+      if (Array.isArray(args[1])) fallbackList = args[1] as string[];
+      rest.push(...args.slice(2));
+    } else if (first && typeof first === "object") {
+      const assignment = first as { primary?: unknown; fallbacks?: string[]; model?: string };
+      if (assignment.primary && typeof assignment.primary === "object") {
+        primaryModel = (assignment.primary as { model?: string }).model ?? String(assignment.primary);
+      } else {
+        primaryModel = String(assignment.primary ?? assignment.model ?? "");
+      }
+      fallbackList = Array.isArray(assignment.fallbacks) ? assignment.fallbacks : [];
+      rest.push(...args.slice(1));
+    } else {
+      primaryModel = "";
+      rest.push(...args);
+    }
+
+    let executor = this.executor;
+    let input: unknown = {};
+    let threadId = this.options.threadId;
+    let maxRetries = this.options.maxRetries;
+
+    for (const arg of rest) {
+      if (typeof arg === "function") {
+        executor = arg as (model: string, input: unknown) => Promise<unknown>;
+      } else if (arg && typeof arg === "object") {
+        const obj = arg as Record<string, unknown>;
+        input = obj;
+        if (typeof obj.executor === "function") executor = obj.executor as (model: string, input: unknown) => Promise<unknown>;
+        if (typeof obj.threadId === "string") threadId = obj.threadId;
+        if (typeof obj.thread === "string") threadId = obj.thread;
+        if (typeof obj.maxRetries === "number") maxRetries = obj.maxRetries;
+      }
+    }
+
+    if (!executor) {
+      throw new Error("No executor provided to FallbackChain");
+    }
+
+    const limit = typeof maxRetries === "number" ? maxRetries : Infinity;
+    const models: string[] = [];
+    const seen = new Set<string>();
+    for (const model of [primaryModel, ...fallbackList]) {
+      if (seen.has(model)) continue;
+      seen.add(model);
+      models.push(model);
+    }
+    const attempts = models.slice(0, Math.max(0, Number.isFinite(limit) ? limit : models.length));
+
+    let lastError: unknown;
+    this.lastSucceededModel = undefined;
+
+    for (let i = 0; i < attempts.length; i++) {
+      const model = attempts[i];
+      try {
+        const result = await executor(model, input);
+        const failed = !!result && typeof result === "object" && (result as { ok?: unknown }).ok === false;
+        if (failed) {
+          lastError = new Error(
+            (result as { error?: string; text?: string }).error ??
+              (result as { text?: string }).text ??
+              "model returned failure",
+          );
+          if (threadId) {
+            appendNative(threadId, {
+              dir: "out",
+              source: "fallback-chain",
+              msg: { model, attempt: i + 1, status: "failed", result },
+            });
+          }
+          continue;
+        }
+        this.lastSucceededModel = model;
+        if (threadId) {
+          appendNative(threadId, {
+            dir: "out",
+            source: "fallback-chain",
+            msg: { model, attempt: i + 1, status: "success" },
+          });
+        }
+        if (result && typeof result === "object") {
+          return result;
+        }
+        return result;
+      } catch (error) {
+        lastError = error;
+        if (threadId) {
+          appendNative(threadId, {
+            dir: "out",
+            source: "fallback-chain",
+            msg: { model, attempt: i + 1, status: "error", error: String(error) },
+          });
+        }
+      }
+    }
+
+    if (lastError) {
+      throw lastError instanceof Error ? lastError : new Error(String(lastError));
+    }
+    throw new Error("Fallback chain exhausted");
+  }
+}
+
