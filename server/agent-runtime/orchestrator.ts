@@ -37,6 +37,7 @@ export function createOrchestrator(dependencies: {
   readonly intelligence?: {
     readonly enabled: boolean;
     readonly decide: (input: { text: string; messageCount?: number; toolCount?: number; hasImages?: boolean; hasCode?: boolean; messages: ReadonlyArray<{ content: string | null | undefined }>; primaryModel: import("./contracts.ts").ProviderModelRef }) => { readonly allowed: boolean; readonly reason?: string; readonly route: { readonly candidates: ReadonlyArray<import("./contracts.ts").ProviderModelRef> } };
+    readonly verify?: (output: string) => Promise<{ ok: boolean; feedback: string }> | { ok: boolean; feedback: string };
   };
 }): Orchestrator {
   const listeners = new Map<string, Set<(event: OrchestrationEvent) => void>>();
@@ -159,42 +160,74 @@ export function createOrchestrator(dependencies: {
           }
         }
 
-        // Build engine request from step.
-        const engineRequest: AgentRunRequest = {
-          botId: step.grant.botId,
-          threadId: step.grant.threadId,
-          text: step.text,
-          messages: buildMessagesWithContext(step, contextVariables),
-          providerModel,
-          grant: step.grant,
-          capabilities: step.capabilities,
-          signal: controller.signal,
-          ...(step.budget ? { budget: step.budget } : {}),
-        };
+        // Self-correcting execution loop: retry step on verification failure.
+        const maxRetries = dependencies.intelligence?.enabled ? 2 : 0;
+        let attempt = 0;
+        let stepResult: PlanResult | undefined;
+        let retryFeedback: string | undefined;
 
-        const { runId, done: runDone } = await dependencies.engine.run(engineRequest);
+        while (attempt <= maxRetries) {
+          const stepText = retryFeedback ? `${step.text}\\n\\nCorrection feedback: ${retryFeedback}` : step.text;
+          const stepMessages = buildMessagesWithContext({ ...step, text: stepText }, contextVariables);
 
-        // Collect output from model delta events.
-        let stepOutput = "";
-        const unsubscribe = dependencies.engine.onEvent(engineRequest.threadId, (event: AgentEvent) => {
-          if (event.type === "model.delta") {
-            stepOutput += event.delta;
+          // Build engine request from step.
+          const engineRequest: AgentRunRequest = {
+            botId: step.grant.botId,
+            threadId: step.grant.threadId,
+            text: stepText,
+            messages: stepMessages,
+            providerModel,
+            grant: step.grant,
+            capabilities: step.capabilities,
+            signal: controller.signal,
+            ...(step.budget ? { budget: step.budget } : {}),
+          };
+
+          const { runId, done: runDone } = await dependencies.engine.run(engineRequest);
+
+          // Collect output from model delta events.
+          let stepOutput = "";
+          const unsubscribe = dependencies.engine.onEvent(engineRequest.threadId, (event: AgentEvent) => {
+            if (event.type === "model.delta") {
+              stepOutput += event.delta;
+            }
+          });
+
+          await runDone;
+          unsubscribe();
+
+          const runRecord = dependencies.engine.getState(runId);
+          stepResult = {
+            stepId: step.id,
+            runId,
+            status: runRecord?.status === "completed" ? "completed" : "failed",
+            output: stepOutput.trim() || undefined,
+            error: runRecord?.failureCode,
+            modelRounds: runRecord?.modelRounds,
+            toolCalls: runRecord?.toolCalls,
+          };
+
+          if (stepResult.status === "failed") {
+            break;
           }
-        });
 
-        await runDone;
-        unsubscribe();
+          // Verify output if intelligence layer provides a verifier.
+          if (dependencies.intelligence?.verify && stepResult.output) {
+            const verification = await dependencies.intelligence.verify(stepResult.output);
+            if (!verification.ok) {
+              retryFeedback = verification.feedback;
+              attempt++;
+              emit(planId, { type: "step.retry", planId, stepId: step.id, attempt, feedback: retryFeedback });
+              continue;
+            }
+          }
 
-        const runRecord = dependencies.engine.getState(runId);
-        const stepResult: PlanResult = {
-          stepId: step.id,
-          runId,
-          status: runRecord?.status === "completed" ? "completed" : "failed",
-          output: stepOutput.trim() || undefined,
-          error: runRecord?.failureCode,
-          modelRounds: runRecord?.modelRounds,
-          toolCalls: runRecord?.toolCalls,
-        };
+          break;
+        }
+
+        if (!stepResult) {
+          stepResult = { stepId: step.id, runId: "", status: "failed", error: "no_result" };
+        }
 
         if (stepResult.output) {
           contextVariables.set(`step_${step.id}_output`, stepResult.output);
@@ -203,7 +236,7 @@ export function createOrchestrator(dependencies: {
 
         recordStep(planId, step, stepResult.status, stepResult);
         if (stepResult.status === "completed") {
-          emit(planId, { type: "step.completed", planId, stepId: step.id, runId });
+          emit(planId, { type: "step.completed", planId, stepId: step.id, runId: stepResult.runId });
         } else {
           emit(planId, { type: "step.failed", planId, stepId: step.id, error: stepResult.error ?? "unknown" });
         }

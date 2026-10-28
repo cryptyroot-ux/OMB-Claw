@@ -131,6 +131,12 @@ export function createAgentEngine(dependencies: {
   /** Optional live capability probe: verifies tools/streaming against the real adapter.
    *  Results are cached per modelId; a failed probe is retried on the next run. */
   readonly probe?: { run(adapter: ModelAdapter, modelId: string): Promise<LiveProbeResult | null> };
+  /** Optional Intelligence Layer: classifies tasks, routes models, estimates cost. */
+  readonly intelligence?: {
+    readonly enabled: boolean;
+    readonly decide: (input: { text: string; messageCount?: number; toolCount?: number; hasImages?: boolean; hasCode?: boolean; messages: ReadonlyArray<{ content: string | null | undefined }>; primaryModel: AgentRunRecord["providerModel"] }) => { readonly allowed: boolean; readonly reason?: string; readonly route: { readonly candidates: ReadonlyArray<AgentRunRecord["providerModel"]> } };
+    readonly log?: (entry: { readonly kind: string; readonly detail: string }) => void;
+  };
 }): AgentEngine {
   const active = new Map<string, {
     readonly threadId: string;
@@ -249,6 +255,36 @@ export function createAgentEngine(dependencies: {
             }
           } else if (dependencies.probe) {
             liveCaps = liveProbeCache.get(currentModelId);
+          }
+          // Intelligence Layer: classify task, route model, estimate cost.
+          if (dependencies.intelligence?.enabled) {
+            const intelligenceDecision = dependencies.intelligence.decide({
+              text: request.text,
+              messageCount: messages.length,
+              toolCount: request.capabilities ? 0 : 0,
+              hasImages: initialImages.length > 0,
+              hasCode: /```|function\\s+\\w|class\\s+\\w/.test(request.text),
+              messages: messages.map((m) => ({ content: typeof m.content === "string" ? m.content : null })),
+              primaryModel: request.providerModel,
+            });
+            dependencies.intelligence.log?.({ kind: "intelligence.decide", detail: JSON.stringify({ allowed: intelligenceDecision.allowed, reason: intelligenceDecision.reason }) });
+            if (!intelligenceDecision.allowed) {
+              updateStatus("failed", "budget_exceeded");
+              emit(request.threadId, { type: "run.failed", runId, message: intelligenceDecision.reason ?? "Budget exceeded", code: "budget_exceeded" });
+              await closeSession();
+              return;
+            }
+            if (intelligenceDecision.route.candidates.length > 0) {
+              const routedRef = intelligenceDecision.route.candidates[0]!;
+              if (routedRef.modelId !== currentModelId || routedRef.providerId !== request.providerModel.providerId) {
+                try {
+                  adapter = dependencies.adapters.resolve(routedRef);
+                  currentModelId = routedRef.modelId;
+                } catch {
+                  // Keep original adapter if routing fails.
+                }
+              }
+            }
           }
           const modelCapabilities = mergeLiveCapabilities(adapter.capabilities(currentModelId), liveCaps);
           const budget = contextBudget(modelCapabilities.contextWindow);

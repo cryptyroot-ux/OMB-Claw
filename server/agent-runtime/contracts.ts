@@ -365,6 +365,7 @@ export type OrchestrationEvent =
   | { readonly type: "step.started"; readonly planId: PlanId; readonly stepId: StepId }
   | { readonly type: "step.completed"; readonly planId: PlanId; readonly stepId: StepId; readonly runId: string }
   | { readonly type: "step.failed"; readonly planId: PlanId; readonly stepId: StepId; readonly error: string }
+  | { readonly type: "step.retry"; readonly planId: PlanId; readonly stepId: StepId; readonly attempt: number; readonly feedback: string }
   | { readonly type: "step.approval_required"; readonly planId: PlanId; readonly stepId: StepId }
   | { readonly type: "plan.approval_required"; readonly planId: PlanId }
   | { readonly type: "context.variable.set"; readonly planId: PlanId; readonly key: string; readonly value: string };

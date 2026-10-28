@@ -2707,7 +2707,6 @@
   "onboarding.continue": "Continue",
   "onboarding.engines.error": "Couldn't check your AI connections. Try again.",
   "onboarding.tour.error": "Couldn't save your progress. Try again, or skip the tour.",
-
   "onboarding.engines.otherWays": "Other ways",
   "onboarding.engines.connected": "{name} is connected. Your bots can start now.",
   "onboarding.engines.answered": "Connected · {name}",
@@ -6779,5 +6778,7 @@
   "keys.search.aria": "Search API keys",
   "keys.search.none": "No keys match “{query}”.",
   "keys.openPage": "Open API keys",
-  "engineSetup.apiKey.inline": "Paste it here. It saves and checks itself, and the models show up here."
+  "engineSetup.apiKey.inline": "Paste it here. It saves and checks itself, and the models show up here.",
+  "settings.intelligence.title": "Intelligence Layer",
+  "settings.intelligence.intro": "Classify tasks, route to the best model, estimate costs, and self-correct."
 }
