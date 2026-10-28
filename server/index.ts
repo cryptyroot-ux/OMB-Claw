@@ -240,6 +240,7 @@ import { createGoalCards, type LiveGoalRun } from "./host/goal-cards.ts";
 import { createOneOnOneGoals } from "./host/one-on-one-goals.ts";
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
+import { supportedAgentDrivers, usesNativeAgentEngine } from "./agent-runtime/engine-support.ts";
 import { openCodeProviderKeysAllowed, setOpenCodeProviderKeyPolicy } from "./drivers/acp/opencode-go.ts";
 import { readMessageText, recallMessages, recentMessages, closeMessageSearch, closeMessageDb, chatFollowups, cancelledChatFollowup, settleChatFollowups, threadsReferencing, logNotification, lastRowAt } from "./message-db.ts";
 import { briefCrossingLabel, claimRecallCrossings, recallCrossingLabel } from "./recall-disclosure.ts";
@@ -8636,6 +8637,7 @@ async function startTurn(
       const dispatch = await guardTurnDispatch(shareNote.after(quickFallback.sendTurn(instance, {
         threadId,
         botId: bot.id,
+        ...(usesNativeAgentEngine(instance.driverKind) ? { agentEngine: "omb-native" as const } : {}),
         startupRecovery,
         text: withTurnClock(clock, withRecalled(recalled, dispatchContext.turnText + shareNote.text + devsReports.note(threadId, Boolean(integrations.agents)))),
         ...(recalled ? { recalled } : {}),
@@ -10580,6 +10582,7 @@ async function runClaimedGroupMemberTurn(
         ...roomSession.send,
         threadId,
         botId: readyBot.id,
+        ...(usesNativeAgentEngine(instance.driverKind) ? { agentEngine: "omb-native" as const } : {}),
         text: roomSession.text,
         ...(roomRecalled ? { recalled: roomRecalled } : {}),
         images: turnImages,
