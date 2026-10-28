@@ -190,6 +190,7 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
       httpErrorLabel: "upstream",
       toolsEnabled: config.tools !== false && String(config.tools) !== "false",
       imageInput: () => true,
+      httpErrorLabel: "upstream",
     });
 
     const runtime = createOpenAIChatRuntime({

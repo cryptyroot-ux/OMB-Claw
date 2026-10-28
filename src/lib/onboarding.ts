@@ -81,6 +81,10 @@ export interface BeatOptions {
   hosted?: boolean;
   /** An AI already works here (a signed-in CLI, an API key, an organization's or the Cloud's model): it is used without a step. */
   aiReady?: boolean;
+  /** Whether any instances are configured (API providers or CLI agents). */
+  hasInstances?: boolean;
+  /** Whether any installable CLI agent is available. OMB Claw uses API providers, so this is false. */
+  hasCliAgents?: boolean;
   /** This computer has skills or MCP servers from another AI tool to bring in. */
   setupImport?: boolean;
   /** MausBot Cloud can be bought from this desktop now (cloudBeatWanted); the first bot stays the last beat. */
@@ -91,7 +95,7 @@ export function beatsFor(options: BeatOptions): BeatId[] {
   if (options.hosted) return ["hello", "bot"];
   const beats: BeatId[] = ["hello"];
   if (options.reel) beats.push("reel");
-  if (!options.aiReady) beats.push("engines");
+  if (!options.aiReady && !(options.hasInstances && !options.hasCliAgents)) beats.push("engines");
   if (options.setupImport) beats.push("import");
   if (options.dictation) beats.push("permissions");
   beats.push("phone");

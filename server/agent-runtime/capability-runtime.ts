@@ -325,24 +325,42 @@ export class CompositeCapabilityRuntime implements CapabilitySession {
 
   async invoke(call: CapabilityCall, context: { readonly grant: CapabilityGrant; readonly signal: AbortSignal }): Promise<CapabilityResult> {
     if (this.closed) return { callId: call.callId, ok: false, content: "Capability runtime is closed", error: "closed" };
-    const provider = this.providers.find((p) => p.list(context.grant).some((d) => d.id === call.capabilityId));
-    if (!provider) return { callId: call.callId, ok: false, content: `Capability not found: ${call.capabilityId}`, error: "not_found" };
-    try {
-      this.validate(call, context.grant);
-    } catch (error) {
-      return { callId: call.callId, ok: false, content: error instanceof Error ? error.message : String(error), error: "denied" };
-    }
+    // Every provider that offers this capability is a fallback candidate: if the
+    // first one fails (crash or execution error), try the next before giving up.
+    // Policy is global — if it denies, no provider can help — so it is checked once.
+    const candidates = this.providers.filter((p) => p.list(context.grant).some((d) => d.id === call.capabilityId));
+    if (candidates.length === 0) return { callId: call.callId, ok: false, content: `Capability not found: ${call.capabilityId}`, error: "not_found" };
     const decision = this.policy(call, context.grant);
     if (!decision.allowed) {
       return { callId: call.callId, ok: false, content: decision.reason ?? "denied", error: "denied" };
     }
-    try {
-      context.signal.throwIfAborted();
-      return await provider.invoke(call, context);
-    } catch (error) {
-      if (context.signal.aborted) return { callId: call.callId, ok: false, content: "interrupted", error: "interrupted" };
-      return { callId: call.callId, ok: false, content: error instanceof Error ? error.message : String(error), error: "failed" };
+    let lastResult: CapabilityResult | undefined;
+    for (const provider of candidates) {
+      try {
+        provider.validate(call, context.grant);
+      } catch (error) {
+        lastResult = { callId: call.callId, ok: false, content: error instanceof Error ? error.message : String(error), error: "denied" };
+        continue;
+      }
+      try {
+        context.signal.throwIfAborted();
+        const result = await provider.invoke(call, context);
+        if (result.ok) return result;
+        // Non-ok result: cascade only on provider-level execution failures, not on
+        // policy denials, interrupts, invalid arguments, or closed sessions — those
+        // would not differ on another provider.
+        lastResult = result;
+        if (result.error === "denied" || result.error === "interrupted" || result.error === "invalid_arguments" || result.error === "closed") {
+          return result;
+        }
+        continue;
+      } catch (error) {
+        if (context.signal.aborted) return { callId: call.callId, ok: false, content: "interrupted", error: "interrupted" };
+        lastResult = { callId: call.callId, ok: false, content: error instanceof Error ? error.message : String(error), error: "failed" };
+        continue;
+      }
     }
+    return lastResult ?? { callId: call.callId, ok: false, content: `Capability not found: ${call.capabilityId}`, error: "not_found" };
   }
 
   async close(): Promise<void> {

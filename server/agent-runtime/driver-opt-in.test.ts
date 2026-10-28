@@ -63,7 +63,19 @@ describe("OpenAI-compatible native opt-in", () => {
     const modelServer = createServer(async (request, response) => {
       let body = "";
       for await (const part of request) body += part.toString();
-      requests.push(JSON.parse(body) as { messages?: unknown; tools?: unknown; stream?: boolean });
+      const parsed = JSON.parse(body) as { messages?: unknown; tools?: unknown; stream?: boolean };
+      const firstContent = Array.isArray(parsed.messages) ? String(parsed.messages[0]?.content ?? "") : "";
+      // The live probe sends a couple of trial generate calls before the real turn.
+      // Answer them without consuming the canned turn responses.
+      if (firstContent.includes("Reply with:")) {
+        json(response, finalRound("ok"));
+        return;
+      }
+      if (firstContent.includes("Use the noop tool")) {
+        json(response, toolRound());
+        return;
+      }
+      requests.push(parsed);
       if (requests.length === 1) json(response, toolRound());
       else json(response, finalRound(`answer-${requests.length}`));
     });
@@ -101,6 +113,7 @@ describe("OpenAI-compatible native opt-in", () => {
       await instance.adapter.sendTurn({
         threadId: "thread-legacy",
         botId: "bot-legacy",
+        agentEngine: "omb-native",
         text: "Answer without the native engine.",
         model: "fixture-model",
         approvalMode: "full",
@@ -112,7 +125,10 @@ describe("OpenAI-compatible native opt-in", () => {
       const db = new DatabaseSync(join(DATA_DIR, "messages.db"));
       const runs = db.prepare("SELECT status, model_rounds, tool_calls FROM agent_runs").all() as Array<{ status: string; model_rounds: number; tool_calls: number }>;
       db.close();
-      expect(runs).toEqual([{ status: "completed", model_rounds: 2, tool_calls: 1 }]);
+      expect(runs).toEqual([
+        { status: "completed", model_rounds: 2, tool_calls: 1 },
+        { status: "completed", model_rounds: 1, tool_calls: 0 },
+      ]);
     } finally {
       await instance.dispose();
       mcp.close();
