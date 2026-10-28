@@ -18,6 +18,11 @@ import type {
   AgentCompactionRecord,
   AgentToolOutputRecord,
   CapabilityCallStatus,
+  PlanRecord,
+  PlanResult,
+  PlanStatus,
+  StepRecord,
+  StepStatus,
 } from "./agent-runtime/contracts.ts";
 export type { SearchHit } from "./message-search-query.ts";
 
@@ -144,6 +149,24 @@ function open(): DatabaseSync {
       PRIMARY KEY (run_id, call_id)
     );
     CREATE INDEX IF NOT EXISTS agent_capability_calls_status ON agent_capability_calls(status);
+    CREATE TABLE IF NOT EXISTS agent_orchestrator_plans (
+      plan_id TEXT PRIMARY KEY,
+      status TEXT NOT NULL,
+      steps TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      context_variables TEXT NOT NULL DEFAULT '{}'
+    );
+    CREATE INDEX IF NOT EXISTS agent_orchestrator_plans_status ON agent_orchestrator_plans(status);
+    CREATE TABLE IF NOT EXISTS agent_orchestrator_steps (
+      step_id TEXT PRIMARY KEY,
+      plan_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      result TEXT,
+      started_at INTEGER,
+      completed_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS agent_orchestrator_steps_plan ON agent_orchestrator_steps(plan_id, completed_at);
   `);
   ensureRecallIndex(db);
   ensureMemoryIndex(db);
@@ -766,6 +789,134 @@ export function recoverUnsettledAgentRuns(now: number): void {
       )
       .run(now);
   });
+}
+
+interface OrchestratorPlanRow {
+  plan_id: string;
+  status: string;
+  steps: string;
+  created_at: number;
+  updated_at: number;
+  context_variables: string;
+}
+
+interface OrchestratorStepRow {
+  step_id: string;
+  plan_id: string;
+  status: string;
+  result: string | null;
+  started_at: number | null;
+  completed_at: number | null;
+}
+
+function toPlanRecord(row: OrchestratorPlanRow): PlanRecord {
+  return {
+    planId: row.plan_id,
+    status: row.status as PlanStatus,
+    steps: JSON.parse(row.steps) as ReadonlyArray<string>,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    contextVariables: new Map(Object.entries(JSON.parse(row.context_variables || "{}")) as [string, string][]),
+  };
+}
+
+function toStepRecord(row: OrchestratorStepRow): StepRecord {
+  return {
+    stepId: row.step_id,
+    planId: row.plan_id,
+    status: row.status as StepStatus,
+    ...(row.result === null ? {} : { result: JSON.parse(row.result) as PlanResult }),
+    ...(row.started_at === null ? {} : { startedAt: row.started_at }),
+    ...(row.completed_at === null ? {} : { completedAt: row.completed_at }),
+  };
+}
+
+export function insertOrchestratorPlan(record: PlanRecord): void {
+  db()
+    .prepare(
+      "INSERT INTO agent_orchestrator_plans(plan_id, status, steps, created_at, updated_at, context_variables) " +
+      "VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .run(
+      record.planId,
+      record.status,
+      JSON.stringify(record.steps),
+      record.createdAt,
+      record.updatedAt,
+      JSON.stringify(Object.fromEntries(record.contextVariables)),
+    );
+}
+
+export function readOrchestratorPlan(planId: string): PlanRecord | undefined {
+  const row = db()
+    .prepare("SELECT * FROM agent_orchestrator_plans WHERE plan_id = ?")
+    .get(planId) as OrchestratorPlanRow | undefined;
+  return row ? toPlanRecord(row) : undefined;
+}
+
+export function updateOrchestratorPlanStatus(planId: string, status: PlanStatus, updatedAt: number): boolean {
+  const result = db()
+    .prepare("UPDATE agent_orchestrator_plans SET status = ?, updated_at = ? WHERE plan_id = ?")
+    .run(status, updatedAt, planId);
+  return Number(result.changes) > 0;
+}
+
+export function insertOrchestratorStep(record: StepRecord): void {
+  db()
+    .prepare(
+      "INSERT INTO agent_orchestrator_steps(step_id, plan_id, status, result, started_at, completed_at) " +
+      "VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .run(
+      record.stepId,
+      record.planId,
+      record.status,
+      record.result === undefined ? null : JSON.stringify(record.result),
+      record.startedAt ?? null,
+      record.completedAt ?? null,
+    );
+}
+
+export function readOrchestratorStep(stepId: string): StepRecord | undefined {
+  const row = db()
+    .prepare("SELECT * FROM agent_orchestrator_steps WHERE step_id = ?")
+    .get(stepId) as OrchestratorStepRow | undefined;
+  return row ? toStepRecord(row) : undefined;
+}
+
+export function updateOrchestratorStepStatus(
+  stepId: string,
+  status: StepStatus,
+  updatedAt: number,
+  result?: PlanResult,
+): boolean {
+  const resultJson = result === undefined ? null : JSON.stringify(result);
+  const dbResult = db()
+    .prepare(
+      "UPDATE agent_orchestrator_steps SET status = ?, result = ?, completed_at = ? WHERE step_id = ?",
+    )
+    .run(status, resultJson, updatedAt, stepId);
+  return Number(dbResult.changes) > 0;
+}
+
+export function listOrchestratorSteps(planId: string): StepRecord[] {
+  const rows = db()
+    .prepare("SELECT * FROM agent_orchestrator_steps WHERE plan_id = ? ORDER BY step_id")
+    .all(planId) as unknown as OrchestratorStepRow[];
+  return rows.map(toStepRecord);
+}
+
+export function recoverUnsettledOrchestratorPlans(now: number): void {
+  db()
+    .prepare(
+      "UPDATE agent_orchestrator_plans SET status = 'interrupted', updated_at = ? WHERE status IN ('pending', 'running')",
+    )
+    .run(now);
+  db()
+    .prepare(
+      "UPDATE agent_orchestrator_steps SET status = 'interrupted', completed_at = ? WHERE status IN ('pending', 'running', 'approval_required')",
+    )
+    .run(now);
 }
 
 export function workingGoalRunMessages(): Array<{ threadId: string; message: Message }> {

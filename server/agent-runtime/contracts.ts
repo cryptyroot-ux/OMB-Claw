@@ -283,3 +283,98 @@ export interface AgentEngine {
   getState(runId: RunId): AgentRunRecord | undefined;
   onEvent(threadId: string, listener: (event: AgentEvent) => void): () => void;
 }
+
+// ============================================================================
+// Layer 3: Orchestration (Option A — orchestrator above Agent Engine)
+// Additive only; no existing types modified.
+// ============================================================================
+
+export type PlanId = string;
+export type StepId = string;
+
+export type PlanStatus = "pending" | "running" | "completed" | "failed" | "interrupted";
+export type StepStatus = "pending" | "running" | "completed" | "failed" | "skipped" | "approval_required";
+
+export interface PlanStep {
+  readonly id: StepId;
+  readonly text: string;
+  readonly providerModel: ProviderModelRef;
+  readonly grant: CapabilityGrant;
+  readonly capabilities: CapabilitySession;
+  readonly dependsOn?: ReadonlyArray<StepId>;
+  readonly approval?: "auto" | "ask";
+  readonly budget?: {
+    readonly maxTokens?: number;
+    readonly maxCostUsd?: number;
+    readonly maxWallTimeMs?: number;
+    readonly maxModelRounds?: number;
+  };
+}
+
+export interface PlanResult {
+  readonly stepId: StepId;
+  readonly runId: string;
+  readonly status: StepStatus;
+  readonly output?: string;
+  readonly error?: string;
+  readonly modelRounds?: number;
+  readonly toolCalls?: number;
+}
+
+export interface OrchestratorContext {
+  readonly planId: PlanId;
+  readonly contextVariables: ReadonlyMap<string, string>;
+  readonly signal: AbortSignal;
+  readonly approvalMode: "ask" | "auto-edits" | "approve-for-me" | "full";
+}
+
+export interface PlanRecord {
+  readonly planId: PlanId;
+  readonly status: PlanStatus;
+  readonly steps: ReadonlyArray<StepId>;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+  readonly contextVariables: ReadonlyMap<string, string>;
+}
+
+export interface StepRecord {
+  readonly stepId: StepId;
+  readonly planId: PlanId;
+  readonly status: StepStatus;
+  readonly result?: PlanResult;
+  readonly startedAt?: number;
+  readonly completedAt?: number;
+}
+
+export interface OrchestratorStore {
+  createPlan(record: PlanRecord): void;
+  getPlan(planId: PlanId): PlanRecord | undefined;
+  updatePlanStatus(planId: PlanId, status: PlanStatus, updatedAt: number): boolean;
+  createStep(record: StepRecord): void;
+  getStep(stepId: StepId): StepRecord | undefined;
+  updateStepStatus(stepId: StepId, status: StepStatus, updatedAt: number, result?: PlanResult): boolean;
+  listSteps(planId: PlanId): StepRecord[];
+  recoverUnsettledPlans(now: number): void;
+}
+
+export type OrchestrationEvent =
+  | { readonly type: "plan.started"; readonly planId: PlanId; readonly stepCount: number }
+  | { readonly type: "plan.completed"; readonly planId: PlanId }
+  | { readonly type: "plan.failed"; readonly planId: PlanId; readonly error: string }
+  | { readonly type: "plan.interrupted"; readonly planId: PlanId }
+  | { readonly type: "step.started"; readonly planId: PlanId; readonly stepId: StepId }
+  | { readonly type: "step.completed"; readonly planId: PlanId; readonly stepId: StepId; readonly runId: string }
+  | { readonly type: "step.failed"; readonly planId: PlanId; readonly stepId: StepId; readonly error: string }
+  | { readonly type: "step.approval_required"; readonly planId: PlanId; readonly stepId: StepId }
+  | { readonly type: "plan.approval_required"; readonly planId: PlanId }
+  | { readonly type: "context.variable.set"; readonly planId: PlanId; readonly key: string; readonly value: string };
+
+export interface Orchestrator {
+  readonly engineId: EngineId;
+  runPlan(steps: readonly PlanStep[], context: OrchestratorContext): { planId: PlanId; done: Promise<void> };
+  getPlanResults(planId: PlanId): readonly StepRecord[] | undefined;
+  interrupt(planId: PlanId): void;
+  approve(planId: PlanId, stepId?: StepId): void;
+  reject(planId: PlanId, stepId?: StepId, reason?: string): void;
+  onEvent(planId: string, listener: (event: OrchestrationEvent) => void): () => void;
+}

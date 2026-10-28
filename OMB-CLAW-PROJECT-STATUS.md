@@ -260,14 +260,17 @@ docs/
 3. **Fallback Provider Chains** — Implement `fallbackProviders` chain in `runtime.ts` / `model-adapter.ts` (terminal error → try next provider)
 4. **Live Capability Probe** — Wire `probeLive()` to real API keys; add to model catalog refresh flow
 
-### Layer 3 (Orchestration) — Discussion Required
-**Before any implementation, align on:**
-- **Scope:** Multi-agent? Cross-thread? Cross-bot? Task DAG execution?
-- **Primitive:** `AgentEngine.run()` already exists — does orchestration layer sit *above* (new `Orchestrator.runPlan()`) or *inside* (extended `AgentRunRequest`)?
-- **State:** Where does plan state live? `run-store.ts` extension? New `plan-store.ts`? SQLite or in-memory?
-- **Capability model:** Reuse `CapabilityProvider` for "sub-agent" capabilities? Or new `AgentProvider` interface?
-- **Human-in-the-loop:** Approval gates at plan level? Step level? Both?
-- **Observability:** Event stream extension (`AgentEvent` → `OrchestrationEvent`)?
+### Layer 3 (Orchestration) — Option A Confirmed
+**Decision:** Orchestration layer sits **above** the Agent Engine (`Orchestrator.runPlan()` calls `AgentEngine.run()` per step). Design doc: `docs/superpowers/specs/2026-10-28-layer-3-orchestrator-option-a-design.md`.
+
+**Resolved:**
+- **Primitive:** Option A — new `Orchestrator` above engine; `AgentEngine.run()` unchanged (contract freeze safe).
+- **State:** New `OrchestratorStore` (SQLite), separate from `run-store.ts`.
+- **Capability model:** Reuse `CapabilityProvider` / `CapabilitySession` per step.
+- **Approval:** Gates at both plan level and step level.
+- **Observability:** Separate `OrchestrationEvent` stream.
+
+**Next:** Implement `orchestrator.ts` (sequential plan execution), `orchestrator-store.ts` (SQLite), contracts, and tests.
 
 ### Agent A Coordination (Session Tree)
 1. Create `feature/session-tree` branch from `main` at `927343a3e`
