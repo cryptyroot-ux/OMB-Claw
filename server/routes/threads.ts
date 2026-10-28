@@ -11,6 +11,7 @@ import type { Coordinator } from "../coordinator.ts";
 import type { WorkspaceAccess } from "../enterprise.ts";
 import type { GroupUsageReader } from "../group-thread-usage.ts";
 import { searchMessagesAsync } from "../message-db.ts";
+import { forkThread, getThreadBranch, getThreadAncestry, setThreadBranch } from "../session-tree.ts";
 import {
   listMessageFolder, messageAttachmentName, messageFileDisposition, messageFileDownloadName, messageFolderEntryName,
   messageImageTargetAt, messageReferencesFile, openMessageFile, openMessageFolderEntry, referencedFileName,
@@ -485,6 +486,79 @@ export function createThreadRoutes(deps: ThreadRouteDeps): RouteHandler {
       });
       return res.end(lines.join("\n"));
     }
+
+    // --- Session Tree: fork / branch ---
+
+    m = path.match(/^\/api\/threads\/([\w-]+)\/fork$/);
+    if (m && method === "POST") {
+      const threadId = m[1];
+      const bot = store.botByThread(threadId);
+      const group = bot ? undefined : store.groupByThread(threadId);
+      if (!bot && !group) return json(res, 404, { error: "no such conversation" });
+      const body = await readBody(req);
+      const newThreadId = typeof body?.newThreadId === "string" && body.newThreadId.length > 0
+        ? body.newThreadId
+        : null;
+      if (!newThreadId) return json(res, 400, { error: "newThreadId is required" });
+      const fromMessageId = typeof body?.fromMessageId === "string" ? body.fromMessageId : null;
+      if (fromMessageId && !store.messagesFor(threadId).some((msg) => msg.id === fromMessageId)) {
+        return json(res, 400, { error: "fromMessageId not found in this conversation" });
+      }
+      try {
+        const result = forkThread(threadId, fromMessageId, newThreadId);
+        return json(res, 201, {
+          threadId: result.newThreadId,
+          parentThreadId: result.parentThreadId,
+          branchPointMessageId: result.branchPointMessageId,
+          copiedMessageCount: result.copiedMessageCount,
+        });
+      } catch (error) {
+        return json(res, 400, { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+
+    m = path.match(/^\/api\/threads\/([\w-]+)\/branch$/);
+    if (m && method === "GET") {
+      const threadId = m[1];
+      const branch = getThreadBranch(threadId);
+      if (!branch) return json(res, 404, { error: "no such conversation" });
+      return json(res, 200, {
+        threadId: branch.threadId,
+        parentThreadId: branch.parentThreadId,
+        branchPointMessageId: branch.branchPointMessageId,
+        branchSummary: branch.branchSummary,
+        activeLeafId: branch.activeLeafId,
+        isForked: Boolean(branch.parentThreadId),
+        ancestry: getThreadAncestry(threadId),
+      });
+    }
+
+    m = path.match(/^\/api\/threads\/([\w-]+)\/branch$/);
+    if (m && method === "POST") {
+      const threadId = m[1];
+      const bot = store.botByThread(threadId);
+      const group = bot ? undefined : store.groupByThread(threadId);
+      if (!bot && !group) return json(res, 404, { error: "no such conversation" });
+      const body = await readBody(req);
+      try {
+        setThreadBranch(threadId, {
+          parentThreadId: typeof body?.parentThreadId === "string" ? body.parentThreadId : null,
+          branchPointMessageId: typeof body?.branchPointMessageId === "string" ? body.branchPointMessageId : null,
+          branchSummary: typeof body?.branchSummary === "string" ? body.branchSummary : null,
+        });
+        const branch = getThreadBranch(threadId);
+        return json(res, 200, {
+          threadId: branch!.threadId,
+          parentThreadId: branch!.parentThreadId,
+          branchPointMessageId: branch!.branchPointMessageId,
+          branchSummary: branch!.branchSummary,
+          activeLeafId: branch!.activeLeafId,
+        });
+      } catch (error) {
+        return json(res, 400, { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+
     return PASS;
   };
   return async (ctx) => (await jobs(ctx) !== PASS || await handle(ctx) !== PASS ? undefined : PASS);
