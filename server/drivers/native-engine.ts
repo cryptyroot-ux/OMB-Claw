@@ -3,6 +3,7 @@ import type { AgentEngine, ModelAdapter, ModelCapabilities } from "../agent-runt
 import { createAgentEngine } from "../agent-runtime/runtime.ts";
 import { createOpenAICompatibleModelAdapter } from "../agent-runtime/model-adapter.ts";
 import { probeCapabilities } from "../agent-runtime/capability-probe.ts";
+import { probeLive } from "../agent-runtime/capability-probe.ts";
 import { createSqliteAgentRunStore } from "../agent-runtime/run-store.ts";
 
 /** Chat-completions drivers share one native engine shape: an OpenAI-compatible adapter over the same catalog the
@@ -42,5 +43,15 @@ export function createNativeChatEngine(options: NativeChatEngineOptions): AgentE
   return createAgentEngine({
     adapters: { resolve: () => adapter },
     store: createSqliteAgentRunStore(),
+    ...(options.apiKey
+      ? {
+          probe: {
+            run: async (adapter, modelId) => {
+              const result = await probeLive(adapter, modelId);
+              return result.error ? null : result;
+            },
+          },
+        }
+      : {}),
   });
 }

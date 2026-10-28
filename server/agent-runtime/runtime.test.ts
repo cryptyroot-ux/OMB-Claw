@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createAgentEngine } from "./runtime.ts";
 import { compactionKeepTokens } from "./compaction.ts";
+import type { LiveProbeResult } from "./capability-probe.ts";
 import type {
   AgentEvent,
   AgentCompactionRecord,
@@ -1196,6 +1197,112 @@ describe("createAgentEngine", () => {
     const toolResults = events.filter((event) => event.type === "tool.result");
     expect(toolResults.some((event) => (event as any).result.ok === false && (event as any).result.content === "unsafe operation")).toBe(true);
   });
+
+  describe("live capability probe", () => {
+
+  function probeRunner(results: ReadonlyArray<LiveProbeResult | null>) {
+    let calls = 0;
+    return {
+      run: async (_adapter: ModelAdapter, _modelId: string): Promise<LiveProbeResult | null> => {
+        calls++;
+        return results[calls - 1] ?? results[results.length - 1];
+      },
+      get calls(): number { return calls; },
+    };
+  }
+
+  it("overrides static tools hint with live probe result (unsupported → run fails)", async () => {
+    const probe = probeRunner([{ tools: false, streaming: true, imageInput: false, latencyMs: 5 }]);
+    const modelAdapter = testModelAdapter([[{ type: "completed", finishReason: "stop" }]]);
+    const store = testRunStore();
+    const engine = createAgentEngine({ adapters: registryFor(modelAdapter), store, probe });
+    const { runId, done } = await engine.run({
+      botId: "bot-1",
+      threadId: "thread-1",
+      text: "Read the fixture.",
+      messages: userMessages,
+      providerModel: { providerId: "fixture", modelId: "fixture-model" },
+      grant,
+      capabilities: testCapabilitySession([descriptor("read-a")]),
+      signal: new AbortController().signal,
+    });
+    await done;
+    expect(probe.calls).toBe(1);
+    expect(store.getRun(runId)).toMatchObject({ status: "failed", failureCode: "unsupported_capability" });
+  });
+
+  it("falls back to static capabilities when the probe reports an error", async () => {
+    const probe = probeRunner([null]);
+    const modelAdapter = testModelAdapter([[{ type: "content.delta", kind: "assistant_text", delta: "ok" }, { type: "completed", finishReason: "stop" }]]);
+    const store = testRunStore();
+    const engine = createAgentEngine({ adapters: registryFor(modelAdapter), store, probe });
+    const { runId, done } = await engine.run({
+      botId: "bot-1",
+      threadId: "thread-1",
+      text: "Answer safely.",
+      messages: userMessages,
+      providerModel: { providerId: "fixture", modelId: "fixture-model" },
+      grant,
+      capabilities: testCapabilitySession([descriptor("read-a")]),
+      signal: new AbortController().signal,
+    });
+    await done;
+    expect(probe.calls).toBe(1);
+    expect(store.getRun(runId)).toMatchObject({ status: "completed" });
+  });
+
+  it("caches the live probe result per model so it is not repeated across runs", async () => {
+    const probe = probeRunner([{ tools: true, streaming: true, imageInput: false, latencyMs: 3 }]);
+    const modelAdapter = testModelAdapter([
+      [{ type: "content.delta", kind: "assistant_text", delta: "ok" }, { type: "completed", finishReason: "stop" }],
+      [{ type: "content.delta", kind: "assistant_text", delta: "ok" }, { type: "completed", finishReason: "stop" }],
+    ]);
+    const store = testRunStore();
+    const engine = createAgentEngine({ adapters: registryFor(modelAdapter), store, probe });
+    const makeRun = (modelId: string) => engine.run({
+      botId: "bot-1",
+      threadId: "thread-1",
+      text: "Answer.",
+      messages: userMessages,
+      providerModel: { providerId: "fixture", modelId: modelId },
+      grant,
+      capabilities: testCapabilitySession([descriptor("read-a")]),
+      signal: new AbortController().signal,
+    });
+    const { runId: firstId, done: firstDone } = await makeRun("fixture-model");
+    await firstDone;
+    const { runId: secondId, done: secondDone } = await makeRun("fixture-model");
+    await secondDone;
+    expect(probe.calls).toBe(1);
+    expect(store.getRun(firstId)).toMatchObject({ status: "completed" });
+    expect(store.getRun(secondId)).toMatchObject({ status: "completed" });
+  });
+
+  it("enables tools when the live probe says supported but static hints do not", async () => {
+    const probe = probeRunner([{ tools: true, streaming: true, imageInput: false, latencyMs: 4 }]);
+    const unsupportedCapabilities: ModelCapabilities = { ...supportedCapabilities, tools: "unsupported" };
+    const modelAdapter = testModelAdapter([
+      [{ type: "tool_calls", calls: [{ id: "call-a", name: "read-a", arguments: { value: "a" } }] }, { type: "completed", finishReason: "tool_calls" }],
+      [{ type: "content.delta", kind: "assistant_text", delta: "done" }, { type: "completed", finishReason: "stop" }],
+    ], unsupportedCapabilities);
+    const store = testRunStore();
+    const engine = createAgentEngine({ adapters: registryFor(modelAdapter), store, probe });
+    const { runId, done } = await engine.run({
+      botId: "bot-1",
+      threadId: "thread-1",
+      text: "Read the fixture.",
+      messages: userMessages,
+      providerModel: { providerId: "fixture", modelId: "fixture-model" },
+      grant,
+      capabilities: testCapabilitySession([descriptor("read-a")]),
+      signal: new AbortController().signal,
+    });
+    await done;
+    expect(probe.calls).toBe(1);
+    expect(store.getRun(runId)).toMatchObject({ status: "completed", modelRounds: 2 });
+  });
+});
+
 describe("compactionKeepTokens", () => {
   it("is proportional to the context window and clamped", () => {
     expect(compactionKeepTokens({ status: "unknown" })).toBe(32_000);

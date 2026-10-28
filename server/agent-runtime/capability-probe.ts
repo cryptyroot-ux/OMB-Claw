@@ -8,7 +8,7 @@
 // "unknown" for tools so the engine never silently claims support it cannot
 // verify, while the adapter's unsupported_tools fallback still recovers when a
 // "supported" claim turns out to be wrong.
-import type { ModelCapabilities, ModelCatalog } from "./contracts.ts";
+import type { ModelCapabilities, ModelCatalog, ModelAdapter } from "./contracts.ts";
 
 export interface CapabilityProbeHints {
   readonly toolsEnabled?: boolean;
@@ -58,7 +58,7 @@ export interface LiveProbeResult {
 /** Live probe: makes a minimal generate call to verify model capabilities.
  *  Requires a real API key. Returns verified capabilities or an error. */
 export async function probeLive(
-  adapter: { generate(request: { messages: ReadonlyArray<{ role: string; content: string }>; model: string; tools: ReadonlyArray<any>; signal: AbortSignal }): AsyncIterable<{ type: string; [k: string]: any }> },
+  adapter: ModelAdapter,
   modelId: string,
   signal: AbortSignal = new AbortController().signal,
 ): Promise<LiveProbeResult> {

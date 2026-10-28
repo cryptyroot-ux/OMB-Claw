@@ -29,10 +29,12 @@ import type {
   CapabilityResult,
   ModelAdapter,
   ModelAdapterError,
+  ModelCapabilities,
   ModelContentPart,
   ModelMessage,
   ModelToolCall,
 } from "./contracts.ts";
+import type { LiveProbeResult } from "./capability-probe.ts";
 
 const MAX_MODEL_ROUNDS = 64;
 const MAX_TOOL_CALLS = 200;
@@ -82,6 +84,18 @@ function modelEventFailure(message: string): AgentRuntimeError {
   return new AgentRuntimeError("invalid_model_response", message);
 }
 
+/** Merge live probe results over static model capabilities. The live probe is ground truth
+ *  for features it actually exercises (tools, streaming); static hints provide everything
+ *  else (context window, modalities the probe does not test such as image input). */
+function mergeLiveCapabilities(staticCaps: ModelCapabilities, live: LiveProbeResult | undefined): ModelCapabilities {
+  if (!live) return staticCaps;
+  return {
+    ...staticCaps,
+    tools: live.tools ? "supported" : "unsupported",
+    streaming: live.streaming ? "supported" : "unsupported",
+  };
+}
+
 /** Shorten content that may exceed the provider's request size:
  * converts image parts to a placeholder text and truncates long tool outputs.
  * Returns new message objects (message content is read-only).
@@ -114,6 +128,9 @@ function shortenMessageContents(messages: readonly ModelMessage[]): ModelMessage
 export function createAgentEngine(dependencies: {
   readonly adapters: { resolve(ref: AgentRunRecord["providerModel"]): ModelAdapter };
   readonly store: AgentRunStore;
+  /** Optional live capability probe: verifies tools/streaming against the real adapter.
+   *  Results are cached per modelId; a failed probe is retried on the next run. */
+  readonly probe?: { run(adapter: ModelAdapter, modelId: string): Promise<LiveProbeResult | null> };
 }): AgentEngine {
   const active = new Map<string, {
     readonly threadId: string;
@@ -123,6 +140,9 @@ export function createAgentEngine(dependencies: {
   }>();
   const activeByThread = new Map<string, string>();
   const listeners = new Map<string, Set<(event: AgentEvent) => void>>();
+  /** Live probe results cached per modelId for the engine's lifetime. Only successful probes
+   *  are cached; failed probes are retried on the next run (cheap when there is no API key). */
+  const liveProbeCache = new Map<string, LiveProbeResult>();
 
   const emit = (threadId: string, event: AgentEvent) => {
     for (const listener of Array.from(listeners.get(threadId) ?? [])) listener(event);
@@ -210,7 +230,19 @@ export function createAgentEngine(dependencies: {
           let adapterIndex = 0;
           let adapter = adapterChain[0]!;
           let currentModelId = request.providerModel.modelId;
-          const modelCapabilities = adapter.capabilities(currentModelId);
+          // Live probe: verify tools/streaming against the real adapter before trusting static hints.
+          // Cached per modelId; a failed probe falls back to static capabilities and retries next run.
+          let liveCaps: LiveProbeResult | undefined;
+          if (dependencies.probe && !liveProbeCache.has(currentModelId)) {
+            const probed = await dependencies.probe.run(adapter, currentModelId);
+            if (probed) {
+              liveProbeCache.set(currentModelId, probed);
+              liveCaps = probed;
+            }
+          } else if (dependencies.probe) {
+            liveCaps = liveProbeCache.get(currentModelId);
+          }
+          const modelCapabilities = mergeLiveCapabilities(adapter.capabilities(currentModelId), liveCaps);
           const budget = contextBudget(modelCapabilities.contextWindow);
           const runBudget = request.budget;
           const runStartedAt = Date.now();
