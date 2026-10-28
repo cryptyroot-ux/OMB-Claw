@@ -236,7 +236,8 @@ export type AgentEvent =
   | { readonly type: "run.interrupted"; readonly runId: RunId }
   | { readonly type: "run.compacted"; readonly runId: RunId; readonly summary: string; readonly firstKeptIndex: number; readonly tokenEstimate: number; readonly trigger: "auto" | "overflow" }
   | { readonly type: "run.recovery_required"; readonly runId: RunId; readonly callId: CapabilityCallId }
-  | { readonly type: "run.checkpoint_available"; readonly runId: RunId; readonly callId: CapabilityCallId; readonly checkpointHash: string };
+  | { readonly type: "run.checkpoint_available"; readonly runId: RunId; readonly callId: CapabilityCallId; readonly checkpointHash: string }
+  | { readonly type: "run.plugins_loaded"; readonly runId: RunId; readonly plugins: ReadonlyArray<string> };
 
 export interface AgentRunRequest {
   readonly botId: BotId;

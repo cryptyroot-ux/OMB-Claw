@@ -141,7 +141,7 @@ export function createAgentEngine(dependencies: {
   /** Enable response caching for identical model requests. */
   readonly cacheEnabled?: boolean;
   /** Optional plugin registry: additional capability providers loaded at runtime. */
-  readonly plugins?: { readonly list: () => ReadonlyArray<{ readonly capabilities: ReadonlyArray<string> }> };
+  readonly plugins?: { readonly list: () => ReadonlyArray<{ readonly manifest: { readonly name: string }; readonly capabilities: ReadonlyArray<string> }> };
 }): AgentEngine {
   const active = new Map<string, {
     readonly threadId: string;
@@ -245,6 +245,14 @@ export function createAgentEngine(dependencies: {
             adapter = createCachingAdapter(adapter);
           }
           let currentModelId = request.providerModel.modelId;
+          // Plugin System: log loaded plugin capabilities for observability.
+          if (dependencies.plugins) {
+            const loaded = dependencies.plugins.list();
+            if (loaded.length > 0) {
+              emit(request.threadId, { type: "run.plugins_loaded", runId, plugins: loaded.map((p) => p.manifest.name) });
+            }
+          }
+
           // Live probe: verify tools/streaming against the real adapter before trusting static hints.
           // Cached per modelId; a failed probe falls back to static capabilities and retries next run.
           // The probe must not block a turn indefinitely: if the adapter never answers
