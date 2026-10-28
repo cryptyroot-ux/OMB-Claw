@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { appendFileSync, mkdtempSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -6,7 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { removeTempDir } from "../../testing/cleanup.ts";
 import {
-  classifyQuiet, describeQuiet, LogTail, parseQwenLogLine, quietKey, sampleProcessTree, treePids,
+  classifyQuiet, describeQuiet, LogTail, parseOpenCodeLogLine, parseQwenLogLine, quietKey, sampleProcessTree, startedSince, treePids,
 } from "./quiet-status.ts";
 import { qwenDebugLogPath } from "./qwen.ts";
 
@@ -61,6 +62,34 @@ describe("classifyQuiet", () => {
   });
 });
 
+// The row format of a real opencode log, with synthetic identifiers.
+const openCodeRow = (fields: string) =>
+  `timestamp=2026-10-01T00:00:03.000Z level=ERROR run=fixture_run message="stream error" providerID=opencode modelID=mimo-v2.6-flash-free ${fields}`;
+
+describe("parseOpenCodeLogLine", () => {
+  it("reads only this session's main-request errors", () => {
+    const limit = 'error.error="AI_APICallError: Rate limit exceeded. Please try again later."';
+    expect(parseOpenCodeLogLine(openCodeRow(`session.id=ses_a small=false agent=build mode=primary ${limit}`), "ses_a"))
+      .toEqual({ kind: "provider-error", message: "Rate limit exceeded. Please try again later." });
+    expect(parseOpenCodeLogLine(openCodeRow(`session.id=ses_b small=false ${limit}`), "ses_a")).toBeNull();
+    expect(parseOpenCodeLogLine(openCodeRow(`session.id=ses_ab small=false ${limit}`), "ses_a")).toBeNull();
+    expect(parseOpenCodeLogLine(openCodeRow(`session.id=ses_a small=true agent=title ${limit}`), "ses_a")).toBeNull();
+    expect(parseOpenCodeLogLine(openCodeRow(`session.id=ses_a small=false ${limit}`).replace("level=ERROR", "level=WARN"), "ses_a")).toBeNull();
+    expect(parseOpenCodeLogLine(openCodeRow("session.id=ses_a small=false"), "ses_a")).toBeNull();
+  });
+
+  it("never repeats a key the provider echoed", () => {
+    const signal = parseOpenCodeLogLine(openCodeRow('session.id=ses_a error.error="AI_APICallError: Incorrect API key provided: sk-proj-abcdefghijklmnopqrstuvwxyz123456"'), "ses_a");
+    expect(signal).toMatchObject({ kind: "provider-error", message: expect.stringContaining("Incorrect API key provided") });
+    expect(JSON.stringify(signal)).not.toContain("abcdefghijklmnopqrstuvwxyz123456");
+  });
+
+  it("keeps an escaped quote inside the error", () => {
+    expect(parseOpenCodeLogLine(openCodeRow('session.id=ses_a error.error="Model \\"x\\" is overloaded" next=1'), "ses_a"))
+      .toEqual({ kind: "provider-error", message: 'Model \\"x\\" is overloaded' });
+  });
+});
+
 describe("describeQuiet", () => {
   it("says it in plain words", () => {
     expect(describeQuiet("Qwen", { kind: "retrying", status: 429, delayMs: 20_000, attempt: 1 }, 90_000, 900_000))
@@ -69,6 +98,8 @@ describe("describeQuiet", () => {
     expect(describeQuiet("Qwen", { kind: "no-signs" }, 180_000, 900_000)).toContain("stopped after 15 min");
     expect(describeQuiet("Qwen", { kind: "between-requests" }, 25_000, 900_000))
       .toBe("Qwen has sent nothing for 25 s and has no request open to its model right now. It may be waiting before a retry. Still waiting; press Stop to end the turn.");
+    expect(describeQuiet("OpenCode", { kind: "provider-error", message: "Rate limit exceeded. Please try again later." }, 75_000, 900_000))
+      .toBe('OpenCode\'s model request failed: "Rate limit exceeded. Please try again later." OpenCode may retry or stop; no reply for 75 s so far.');
   });
 
   it("a new retry attempt is news; the same state is not", () => {
@@ -114,6 +145,34 @@ describe("LogTail", () => {
 describe("process probe", () => {
   it("walks a process tree", () => {
     expect(treePids([{ pid: 2, ppid: 1 }, { pid: 3, ppid: 2 }, { pid: 4, ppid: 9 }], 1)).toEqual([1, 2, 3]);
+  });
+
+  it("counts only what a tool call started: never the engine itself, nor the tool servers it started before", () => {
+    const rows = [
+      { pid: 10, ppid: 1, startedAt: 60_200 },
+      { pid: 11, ppid: 10, startedAt: 1_000 },
+      { pid: 12, ppid: 10, startedAt: 60_000 },
+      { pid: 13, ppid: 12, startedAt: 60_500 },
+      { pid: 14, ppid: 10, startedAt: null },
+      { pid: 20, ppid: 1, startedAt: 61_000 },
+    ];
+    expect(startedSince(rows, 10, 61_000), "an engine started for this very turn, as Codex's app-server is, is still not the call").toEqual([12, 13]);
+    expect(startedSince(rows, 10, 90_000)).toEqual([]);
+  });
+
+  it.skipIf(process.platform === "win32")("samples a tool call's own processes, and reads nothing it did not start as unknown", async () => {
+    const since = Date.now();
+    const child = spawn(process.execPath, ["-e", "const t = Date.now(); while (Date.now() - t < 2500) {} setInterval(() => {}, 1000);"], { stdio: "ignore" });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 2_700));
+      const own = await sampleProcessTree(process.pid, since);
+      // Linux procps prints TIME in whole seconds: 2.5 s of spinning reads at least one even on a busy runner.
+      expect(own.cpuMs).not.toBeNull();
+      expect(own.cpuMs!).toBeGreaterThanOrEqual(1_000);
+      expect(await sampleProcessTree(process.pid, Date.now() + 60_000)).toEqual({ cpuMs: null, connections: null });
+    } finally {
+      child.kill();
+    }
   });
 
   it.skipIf(process.platform === "win32")("counts this process's open connections and CPU", async () => {

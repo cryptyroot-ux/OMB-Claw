@@ -1,14 +1,22 @@
 import { useEffect, useState } from "react";
 import { ChevronDown, Cloud, Laptop } from "lucide-react";
+import { track } from "@/lib/analytics";
 import { cn } from "@/lib/cn";
+import type { Action } from "@/state/store";
 import type { CloudPlanSnapshot } from "../../electron/cloud-account.mjs";
 import { cloudColor } from "@/lib/cloud-look";
 import { t } from "@/lib/i18n";
+import { railShown, usePlaces } from "@/lib/places";
 import { CloudTile } from "./cloud-buy/parts";
 import { SIMPLE_RAIL_BUTTON } from "./SidebarSimpleTop";
 
 export function openServerMenu(bridge: { menu: (options?: { from?: "howto" }) => Promise<void> }, { howTo = false, onClosed }: { howTo?: boolean; onClosed?: () => void } = {}): Promise<void> {
   return bridge.menu(howTo ? { from: "howto" } : undefined).finally(() => { if (howTo) onClosed?.(); });
+}
+
+export function endCloudHowTo(dispatch: (action: Action) => void): void {
+  track("cloud_howto", { result: "closed" });
+  dispatch({ type: "cloudHowTo", open: false });
 }
 
 function PowerLine({ text }: { text: string }) {
@@ -39,25 +47,51 @@ export function useCloudPower(cloudHome: boolean): { sleeps: boolean | null; wak
   return { sleeps: plan ? sleeps : null, waking };
 }
 
+export type WorkspacePlace = ReturnType<typeof useWorkspacePlace>;
+
 /**
  * Security: the dropdown is native; a remote workspace cannot choose a destination or read the other workspaces saved
  * here.
  */
-export function DesktopWorkspaceSwitcher({ compact = false, inline = false, pill = false, rail = false, cloudHome = false, owner = null, howTo = false, onMenuClosed }: {
-  compact?: boolean; inline?: boolean; pill?: boolean; rail?: boolean; cloudHome?: boolean; owner?: string | null; howTo?: boolean; onMenuClosed?: () => void;
-}) {
+export function useWorkspacePlace({ cloudHome = false, howTo = false, onMenuClosed }: { cloudHome?: boolean; howTo?: boolean; onMenuClosed?: () => void }) {
   const bridge = window.ogb?.workspaces;
   const [current, setCurrent] = useState<{ local: boolean; name: string; origin?: string; color?: string; home?: boolean } | null>(null);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
     let alive = true;
-    void bridge?.state().then((state) => { if (alive) setCurrent(state); }).catch(() => {});
-    return () => { alive = false; };
+    const read = () => void bridge?.state().then((state) => { if (alive) setCurrent(state); }).catch(() => {});
+    read();
+    // Main's word that a place changed (its colour, say): the switcher's dot follows.
+    const off = bridge?.onChanged?.(read);
+    return () => { alive = false; off?.(); };
   }, [bridge]);
   const power = useCloudPower(cloudHome || current?.home === true);
   const onLine = power.sleeps === null ? "" : t(power.sleeps ? "cloudSetup.sleepsWhenIdle" : "cloudSetup.alwaysOn");
   const waking = power.waking ? t("cloudHome.waking") : "";
+  const openMenu = () => {
+    if (!bridge || open) return;
+    setError(""); setOpen(true);
+    void openServerMenu(bridge, { howTo, onClosed: onMenuClosed }).catch(() => setError(t("sidebar.switchServerError")))
+      .finally(() => setOpen(false));
+  };
+  return { bridge, current, cloudHome, open, error, onLine, waking, openMenu, switchable: Boolean(bridge) && current?.home !== true };
+}
+
+type SwitcherProps = {
+  compact?: boolean; inline?: boolean; pill?: boolean; rail?: boolean; cloudHome?: boolean; owner?: string | null; howTo?: boolean; onMenuClosed?: () => void;
+};
+
+/** The place on screen and the native Server menu; where the rail of places shows (two places or more, a wide window), the
+ * rail switches instead. */
+export function DesktopWorkspaceSwitcher(props: SwitcherProps) {
+  const besideRail = railShown(usePlaces());
+  const switcher = <Switcher {...props} />;
+  return besideRail ? <div data-switcher-beside-rail className="contents md:hidden">{switcher}</div> : switcher;
+}
+
+function Switcher({ compact = false, inline = false, pill = false, rail = false, cloudHome = false, owner = null, howTo = false, onMenuClosed }: SwitcherProps) {
+  const { bridge, current, open, error, onLine, waking, openMenu } = useWorkspacePlace({ cloudHome, howTo, onMenuClosed });
   const withPower = (name: string) => (onLine ? `${name} · ${onLine}` : name);
   // This window's home is My Cloud: it opens nothing else, so there is nothing to switch.
   if (!bridge || current?.home === true) {
@@ -86,12 +120,6 @@ export function DesktopWorkspaceSwitcher({ compact = false, inline = false, pill
   const shown = cloudHome ? withPower(name) : name;
   const title = current?.origin ? `${shown} · ${current.origin}` : shown;
   const label = t("sidebar.switchServer", { name: shown });
-  const openMenu = () => {
-    if (open) return;
-    setError(""); setOpen(true);
-    void openServerMenu(bridge, { howTo, onClosed: onMenuClosed }).catch(() => setError(t("sidebar.switchServerError")))
-      .finally(() => setOpen(false));
-  };
   if (rail) return <div data-workspace-switcher="rail" className="relative">
     <button type="button" aria-label={label} aria-haspopup="menu" aria-expanded={open} data-cloud-home-indicator={cloudHome || undefined}
       data-tour="server-switcher" title={title} onClick={openMenu} className={cn(SIMPLE_RAIL_BUTTON, "aria-expanded:bg-raised")}

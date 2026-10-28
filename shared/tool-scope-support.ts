@@ -6,7 +6,7 @@ export const TOOL_SCOPE_SUPPORT = {
   "openai-compat": "native-and-mcp", mistral: "native-and-mcp", minimax: "native-and-mcp", cerebras: "native-and-mcp", groq: "native-and-mcp", meta: "native-and-mcp",
   anthropic: "native-and-mcp", gemini: "native-and-mcp", "openai-responses": "native-and-mcp",
   claudeAgent: "mcp", codex: "mcp", geminiAgent: "mcp", kimiAgent: "mcp", droidAgent: "mcp",
-  cursorAgent: "mcp", opencodeGo: "mcp", qwenAgent: "mcp", hermesAgent: "mcp", clineAgent: "mcp", deepseekAgent: "mcp", customAcp: "mcp", antigravityAgent: "mcp", museCode: "mcp",
+  cursorAgent: "mcp", opencodeGo: "mcp", qwenAgent: "mcp", hermesAgent: "mcp", clineAgent: "mcp", copilotAgent: "mcp", deepseekAgent: "mcp", customAcp: "mcp", antigravityAgent: "mcp", museCode: "mcp",
 } as const;
 
 export function assertToolScopeSupported(engine: string, value: unknown): ToolScope | undefined {

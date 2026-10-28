@@ -10,12 +10,12 @@ import {
 import { updateClaudeCli } from "../claude-update.ts";
 import { persistableInstanceConfigs, saveConfig, withInstanceCli, type AppConfig } from "../config.ts";
 import { addEndpoint, addEndpointSchema, isAddedEndpoint, withEndpointUrls } from "../openai-compat-endpoints.ts";
-import type { InstanceConfigMap, ModelSelection } from "../contracts.ts";
+import type { InstanceConfigMap, ModelSelection, ProviderInstance } from "../contracts.ts";
 import { removeAntigravityProfile } from "../drivers/antigravity-acp.ts";
 import { BUILT_IN_DRIVERS } from "../drivers/builtIn.ts";
 import { findCliCandidates, resetPathCache } from "../env-path.ts";
 import type { ProviderRegistry } from "../harness/registry.ts";
-import { checkEngine } from "../engine-check.ts";
+import { checkEngine, type EngineCheck } from "../engine-check.ts";
 import { HOSTED_PROVIDER_SETTINGS_ERROR } from "../hosted-models.ts";
 import type { ProviderAuthSessions } from "../provider-auth-sessions.ts";
 import { providerIconPatchSchema, withInstanceIcon } from "../provider-icon.ts";
@@ -43,6 +43,8 @@ export interface InstanceRouteDeps {
   threadBusy(botId: string, threadId: string): boolean;
   botForThread(botId: string, threadId: string): Pick<{ modelSelection: ModelSelection }, "modelSelection"> | null;
   activeGroupTurnForBot(botId: string): { threadId: string } | null;
+  /** The server's tested-AI record (server/tested-ai.ts): a check there also settles the new-bot default. */
+  checkInstance?(instance: ProviderInstance): Promise<EngineCheck>;
 }
 
 export function createInstanceRoutes(deps: InstanceRouteDeps): RouteHandler {
@@ -52,6 +54,29 @@ export function createInstanceRoutes(deps: InstanceRouteDeps): RouteHandler {
     botForThread, activeGroupTurnForBot,
   } = deps;
   const describeInstances = async () => hostedModels ? deps.describeInstances() : withEndpointUrls(await deps.describeInstances(), cfg.instances ?? {});
+  const busyProviderSelections = () => store.bots.flatMap((bot) => {
+    const busyTasks = store.tasks(bot.id).filter((task) => threadBusy(bot.id, task.threadId));
+    const selections = busyTasks.map((task) => botForThread(bot.id, task.threadId)!.modelSelection);
+    if (activeGroupTurnForBot(bot.id) || (bot.busy && busyTasks.length === 0)) selections.push(bot.modelSelection);
+    return selections;
+  });
+  /** After the app installed its own copy of an engine whose CLI found a copy that does not start: point the engine at the
+   * app's copy, as Set CLI would. Not while provider settings are changing or a bot is using the engine. */
+  const useAppCopy = async (instanceId: string, cli: string): Promise<boolean> => {
+    if (providerConfigBusy.get() || busyProviderSelections().some((selection) => selection.instanceId === instanceId)) return false;
+    providerConfigBusy.set(true);
+    providerInstancesChanging.add(instanceId);
+    try {
+      const result = withInstanceCli(cfg, instanceId, cli);
+      const instances = persistableInstanceConfigs(result.config);
+      if (!result.ok || !Object.hasOwn(instances, instanceId)) return false;
+      await persistProviderInstance(instanceId, instances);
+      return true;
+    } finally {
+      providerInstancesChanging.delete(instanceId);
+      providerConfigBusy.set(false);
+    }
+  };
   // One updater per executable: Claude instances can share an install, and two self-updates would race its files.
   const claudeUpdatesInFlight = new Set<string>();
   return async ({ req, res, url, path, method, auth, json, readBody }) => {
@@ -161,15 +186,17 @@ export function createInstanceRoutes(deps: InstanceRouteDeps): RouteHandler {
           const instance = registry.get(instanceId);
           if (!instance) return json(res, 404, { error: "unknown instance" });
           res.setHeader("cache-control", "no-store");
-          return json(res, 200, await checkEngine(instance));
+          return json(res, 200, await (deps.checkInstance ?? checkEngine)(instance));
         }
         if (action === "refresh-models") {
           if (!(await registry.refreshModels(instanceId))) return json(res, 404, { error: "unknown instance" });
           return json(res, 200, { instances: await describeInstances() });
         }
         if (action === "install") {
-          if (!(await registry.installRuntime(instanceId))) return json(res, 404, { error: "Installing this engine from Settings is not available on this server. Use the install command on the machine running OpenMausBot." });
-          return json(res, 200, { instances: await describeInstances() });
+          const installed = await registry.installRuntime(instanceId);
+          if (!installed) return json(res, 404, { error: "Installing this engine from Settings is not available on this server. Use the install command on the machine running OpenMausBot." });
+          const usingAppCopy = installed !== true && await useAppCopy(instanceId, installed.useCli);
+          return json(res, 200, { instances: await describeInstances(), ...(usingAppCopy ? { usingAppCopy: true } : {}) });
         }
         if (action === "auth/start") {
           const instance = registry.get(instanceId);
@@ -237,12 +264,6 @@ export function createInstanceRoutes(deps: InstanceRouteDeps): RouteHandler {
     }
 
     // No command or path comes from the request: the registry supplies this instance's executable. JSON-only.
-    const busyProviderSelections = () => store.bots.flatMap((bot) => {
-      const busyTasks = store.tasks(bot.id).filter((task) => threadBusy(bot.id, task.threadId));
-      const selections = busyTasks.map((task) => botForThread(bot.id, task.threadId)!.modelSelection);
-      if (activeGroupTurnForBot(bot.id) || (bot.busy && busyTasks.length === 0)) selections.push(bot.modelSelection);
-      return selections;
-    });
     const claudeUpdate = /^\/api\/instances\/([\w.-]+)\/claude-update$/.exec(path);
     if (method === "POST" && claudeUpdate) {
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {

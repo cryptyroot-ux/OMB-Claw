@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR, ensureDirs, instanceConfigs, NATIVE_DIR, type AppConfig } from "../config.ts";
 import { TurnAuthenticationRefusedError, type ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
-import { BACKGROUND_CALL_TIMEOUT_MS, backgroundCallArgs } from "./claude-background.ts";
+import { BACKGROUND_CALL_TIMEOUT_MS, BACKGROUND_SETTINGS, backgroundCallArgs } from "./claude-background.ts";
 import {
   autoCompactWindow,
   brokerSocketCandidates,
@@ -589,6 +589,21 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(recorder.events[beat]).toMatchObject({ itemType: "tool" });
     expect(beat).toBeGreaterThan(types.indexOf("item.started"));
     expect(beat).toBeLessThan(types.lastIndexOf("item.completed"));
+  });
+
+  it("names the CLI process while a long tool runs, and no process once the turn is over", async () => {
+    const release = join(scratch, "release");
+    await create(undefined, {
+      FAKE_CLAUDE_TOOL_CALLS: JSON.stringify([{ name: "Bash", input: { command: "python3 scrape.py" }, hold: "idle" }]), FAKE_CLAUDE_RELEASE: release,
+    });
+    await instance.adapter.sendTurn({ threadId: "t-engine-pid", text: "scrape" });
+    await recorder.until((e) => e.type === "item.started" && e.itemType === "tool");
+    const pid = instance.adapter.enginePid?.("t-engine-pid");
+    expect(pid).toEqual(expect.any(Number));
+    expect(() => process.kill(pid!, 0), "the CLI running this turn").not.toThrow();
+    writeFileSync(release, "go");
+    await recorder.until((e) => e.type === "turn.completed");
+    expect(instance.adapter.enginePid?.("t-engine-pid")).toBeUndefined();
   });
 
   it("reports a long Write's input as it streams, after the bot's words and before its tool call", async () => {
@@ -3682,6 +3697,28 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(existsSync(seen.cwd)).toBe(false);
   });
 
+  it("runs every one-off call on Haiku 5.5 without thinking or hooks, by settings, and leaves a chat turn as it was", async () => {
+    await create(undefined, { FAKE_CLAUDE_VERSION: "2.1.296" });
+    const dump = join(scratch, "no-thinking.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    const seen = () => JSON.parse(readFileSync(dump, "utf8")) as { argv: string[]; env: Record<string, string | undefined> };
+    for (const call of [() => instance.generateText!("summarize"), () => instance.reviewPermission!("review this request")]) {
+      await call();
+      const { argv, env } = seen();
+      expect(argv[argv.indexOf("--model") + 1]).toBe("claude-haiku-5-5");
+      expect(JSON.parse(argv[argv.indexOf("--settings") + 1]!)).toEqual({ alwaysThinkingEnabled: false, disableAllHooks: true });
+      expect(argv).not.toContain("--effort");
+      expect(env.MAX_THINKING_TOKENS).toBeUndefined();
+    }
+    const turnDump = join(scratch, "own-thinking-turn.json");
+    process.env.FAKE_CLAUDE_DUMP = turnDump;
+    await instance.adapter.sendTurn({ threadId: "t-own-thinking", text: "go", approvalMode: "ask", model: "claude-sonnet-5" });
+    await vi.waitFor(() => expect(existsSync(turnDump)).toBe(true));
+    const turn = JSON.parse(readFileSync(turnDump, "utf8")) as { argv: string[] };
+    expect(turn.argv[turn.argv.indexOf("--model") + 1]).toBe("claude-sonnet-5");
+    expect(turn.argv.join(" ")).not.toContain("alwaysThinkingEnabled");
+  });
+
   it("reads the CLI version before a helper call, so an older CLI gets no --tools", async () => {
     await create(undefined, { FAKE_CLAUDE_VERSION: "2.1.250" });
     const dump = join(scratch, "older-helper.json");
@@ -3700,16 +3737,16 @@ describe("ClaudeDriver turns (fake CLI)", () => {
   });
 
   it("passes only the background flags the installed CLI accepts", () => {
-    const base = { model: "claude-haiku-4-5", outputFormat: "text" as const };
+    const base = { model: "claude-haiku-5-5", outputFormat: "text" as const };
     const cli = (version: [number, number, number]) => (flag: Parameters<typeof claudeCliSupports>[1]) => claudeCliSupports(version, flag);
     expect(backgroundCallArgs({ ...base, supports: cli([2, 1, 296]), isolated: true })).toEqual([
-      "-p", "--model", "claude-haiku-4-5", "--output-format", "text",
+      "-p", "--model", "claude-haiku-5-5", "--output-format", "text", "--settings", BACKGROUND_SETTINGS,
       "--tools", "", "--no-session-persistence", "--strict-mcp-config", "--setting-sources", "project",
     ]);
     // OMB_CLAUDE_INHERIT_USER_CONFIG keeps the person's own setup, still without tools
     expect(backgroundCallArgs({ ...base, supports: cli([2, 1, 296]), isolated: false })).not.toContain("--strict-mcp-config");
     expect(backgroundCallArgs({ ...base, supports: cli([1, 0, 100]), isolated: true })).toEqual([
-      "-p", "--model", "claude-haiku-4-5", "--output-format", "text", "--strict-mcp-config",
+      "-p", "--model", "claude-haiku-5-5", "--output-format", "text", "--settings", BACKGROUND_SETTINGS, "--strict-mcp-config",
     ]);
   });
 
@@ -3750,7 +3787,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(onUsage.mock.calls).toEqual([[{ model: "claude-haiku-4-5-20251001", input: 33, output: 5, cachedInput: 20, costUsd: 0.004 }]]);
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(seen.argv[seen.argv.indexOf("--output-format") + 1]).toBe("json");
-    expect(seen.argv[seen.argv.indexOf("--model") + 1]).toBe("claude-haiku-4-5");
+    expect(seen.argv[seen.argv.indexOf("--model") + 1]).toBe("claude-haiku-5-5");
     expect(recorder.events).toEqual([]);
   });
 
@@ -3774,7 +3811,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     });
     const onUsage = vi.fn();
     await expect(instance.generateText!("summarize", { onUsage })).rejects.toThrow("synthetic billed failure");
-    expect(onUsage.mock.calls).toEqual([[{ model: "claude-haiku-4-5", input: undefined, output: undefined, cachedInput: undefined, costUsd: 0.01 }]]);
+    expect(onUsage.mock.calls).toEqual([[{ model: "claude-haiku-5-5", input: undefined, output: undefined, cachedInput: undefined, costUsd: 0.01 }]]);
   });
 
   it("writes a one-shot with the model a caller names, while permission review keeps its own", async () => {
@@ -3785,13 +3822,13 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       const seen = JSON.parse(readFileSync(dump, "utf8"));
       return seen.argv[seen.argv.indexOf("--model") + 1];
     };
-    await expect(instance.generateText!("summarize", { model: "claude-haiku-5-5" })).resolves.toBe("fake generated text");
-    expect(model()).toBe("claude-haiku-5-5");
-    await expect(instance.generateText!("summarize")).resolves.toBe("fake generated text");
+    await expect(instance.generateText!("summarize", { model: "claude-haiku-4-5" })).resolves.toBe("fake generated text");
     expect(model()).toBe("claude-haiku-4-5");
+    await expect(instance.generateText!("summarize")).resolves.toBe("fake generated text");
+    expect(model()).toBe("claude-haiku-5-5");
     // the contract gives permission review no way to name a model
     await expect(instance.reviewPermission!("review this request")).resolves.toBe("fake generated text");
-    expect(model()).toBe("claude-haiku-4-5");
+    expect(model()).toBe("claude-haiku-5-5");
   });
 
   it.each(["not JSON", '{"type":"assistant"}'])("rejects malformed one-shot output without invented usage (%s)", async result => {

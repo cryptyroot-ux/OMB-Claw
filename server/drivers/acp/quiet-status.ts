@@ -3,7 +3,10 @@
 // probed from the agent's debug log and its process tree's connections and CPU.
 
 import { execFile } from "node:child_process";
-import { closeSync, fstatSync, openSync, readSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readSync } from "node:fs";
+import { join } from "node:path";
+
+import { redactSecretsInText } from "../../redact.ts";
 
 // Prompt silence guard (0 disables). Healthy agents go quiet for minutes: Qwen Code 0.24 sends
 // nothing while it compresses history, backs off a rate limit (60 s up to 5 min per wait) or runs
@@ -18,14 +21,28 @@ export const promptIdleTimeoutMs = (): number => {
 export const formatQuietLimit = (ms: number): string =>
   ms >= 120_000 && ms % 60_000 === 0 ? `${ms / 60_000} min` : `${Math.round(ms / 1000)} s`;
 
+/** Silence before the first "what is it doing" notice (OMB_ACP_QUIET_NOTICE_MS overrides). */
+export const DEFAULT_QUIET_NOTICE_MS = 60_000;
+/** How often a quiet turn or a long tool call is looked at again (OMB_ACP_QUIET_TICK_MS overrides). */
+export const DEFAULT_QUIET_TICK_MS = 15_000;
+
+const knob = (name: string, fallback: number): number => {
+  const ms = Number(process.env[name]);
+  return Number.isFinite(ms) && ms > 0 ? ms : fallback;
+};
+export const quietNoticeMs = (): number => knob("OMB_ACP_QUIET_NOTICE_MS", DEFAULT_QUIET_NOTICE_MS);
+export const quietTickMs = (): number => knob("OMB_ACP_QUIET_TICK_MS", DEFAULT_QUIET_TICK_MS);
+
 export type LogSignal =
   | { kind: "retry"; status: number | null; delayMs: number | null; attempt: number | null }
   | { kind: "compressing" }
-  | { kind: "context"; tokens: number; threshold: number };
+  | { kind: "context"; tokens: number; threshold: number }
+  | { kind: "provider-error"; message: string };
 
 export type QuietState =
   | { kind: "retrying"; status: number | null; delayMs: number | null; attempt: number | null }
   | { kind: "compressing" }
+  | { kind: "provider-error"; message: string }
   | { kind: "waiting-model"; nearFullContext: boolean }
   | { kind: "busy" }
   /** no connection, no CPU, briefly: an SDK sleeping between retries looks like this */
@@ -62,6 +79,16 @@ export function parseQwenLogLine(line: string): LogSignal | null {
   const gate = /\[compaction\] cheap-gate NOOP: effectiveTokens=(\d+), auto=(\d+)/.exec(line);
   if (gate) return { kind: "context", tokens: Number(gate[1]), threshold: Number(gate[2]) };
   return null;
+}
+
+/** OpenCode 1.18's shared log, one logfmt row per failed model call of any session or process, like
+ *  `level=ERROR … message="stream error" … session.id=ses_… small=false … error.error="AI_APICallError: Rate limit exceeded."`.
+ *  `small=true` is the session's title request, not the turn. */
+export function parseOpenCodeLogLine(line: string, sessionId: string): LogSignal | null {
+  const fields = line.split(" ");
+  if (!fields.includes("level=ERROR") || !fields.includes(`session.id=${sessionId}`) || fields.includes("small=true")) return null;
+  const error = /\berror\.error="((?:[^"\\]|\\.)*)"/.exec(line)?.[1];
+  return error ? { kind: "provider-error", message: redactSecretsInText(error.replace(/^AI_APICallError:\s*/, "")).slice(0, 200) } : null;
 }
 
 export class LogTail {
@@ -116,6 +143,19 @@ const run = (file: string, args: string[], timeoutMs = 4_000): Promise<string | 
     });
   });
 
+// A server can run with a narrowed PATH (a sealed test fixture runs with node's folder alone); ps and lsof are still
+// found where the system keeps them.
+const SYSTEM_DIRS = ["/bin", "/usr/bin", "/usr/sbin", "/sbin"];
+const systemTools = new Map<string, string>();
+const systemTool = (name: string): string => {
+  let path = systemTools.get(name);
+  if (path === undefined) {
+    path = SYSTEM_DIRS.map((dir) => join(dir, name)).find((candidate) => existsSync(candidate)) ?? name;
+    systemTools.set(name, path);
+  }
+  return path;
+};
+
 /** `ps` TIME: [[dd-]hh:]mm:ss[.cc] */
 function psTimeMs(raw: string): number | null {
   const m = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)$/.exec(raw.trim());
@@ -142,35 +182,53 @@ export function treePids(rows: Array<{ pid: number; ppid: number }>, root: numbe
   return out;
 }
 
-async function samplePosix(root: number): Promise<ProcessSample> {
-  const table = await run("ps", ["-A", "-o", "pid=,ppid=,time="]);
+/** A process start is read to the second (`ps` etime), so a call's own processes may look this much older than it. */
+const START_SLACK_MS = 2_000;
+
+/** What one tool call is running: the root's descendants that started since the call did, not the root itself. */
+export function startedSince(rows: Array<{ pid: number; ppid: number; startedAt: number | null }>, root: number, since: number): number[] {
+  const startOf = new Map(rows.map((r) => [r.pid, r.startedAt]));
+  return treePids(rows, root).filter((pid) => pid !== root && (startOf.get(pid) ?? -Infinity) >= since - START_SLACK_MS);
+}
+
+async function samplePosix(root: number, since?: number): Promise<ProcessSample> {
+  const table = await run(systemTool("ps"), ["-A", "-o", "pid=,ppid=,time=,etime="]);
   if (table === null) return { cpuMs: null, connections: null };
-  const rows: Array<{ pid: number; ppid: number; cpuMs: number | null }> = [];
+  const now = Date.now();
+  const rows: Array<{ pid: number; ppid: number; cpuMs: number | null; startedAt: number | null }> = [];
   for (const line of table.split("\n")) {
-    const [pid, ppid, time] = line.trim().split(/\s+/);
+    const [pid, ppid, time, elapsed] = line.trim().split(/\s+/);
     if (!pid || !ppid || !time) continue;
-    rows.push({ pid: Number(pid), ppid: Number(ppid), cpuMs: psTimeMs(time) });
+    const age = elapsed ? psTimeMs(elapsed) : null;
+    rows.push({ pid: Number(pid), ppid: Number(ppid), cpuMs: psTimeMs(time), startedAt: age === null ? null : now - age });
   }
-  const pids = treePids(rows, root);
   if (!rows.some((r) => r.pid === root)) return { cpuMs: null, connections: null };
+  const pids = since === undefined ? treePids(rows, root) : startedSince(rows, root, since);
+  if (!pids.length) return { cpuMs: null, connections: null };
   let cpuMs = 0;
   for (const r of rows) if (pids.includes(r.pid)) cpuMs += r.cpuMs ?? 0;
-  const lsof = await run("lsof", ["-nP", "-a", "-p", pids.join(","), "-iTCP", "-sTCP:ESTABLISHED", "-Fn"]);
+  const lsof = await run(systemTool("lsof"), ["-nP", "-a", "-p", pids.join(","), "-iTCP", "-sTCP:ESTABLISHED", "-Fn"]);
   // -Fn prints one `n<addr>` line per connection
   const connections = lsof === null ? null : lsof.split("\n").filter((l) => l.startsWith("n")).length;
   return { cpuMs, connections };
 }
 
-async function sampleWindows(root: number): Promise<ProcessSample> {
+async function sampleWindows(root: number, since?: number): Promise<ProcessSample> {
+  const own = since === undefined ? ""
+    : `$from=[DateTimeOffset]::FromUnixTimeMilliseconds(${Math.floor(since - START_SLACK_MS)}).LocalDateTime;` +
+      `$ids=@($all|Where-Object{($ids -contains $_.ProcessId) -and $_.ProcessId -ne ${root} -and $_.CreationDate -ge $from}|ForEach-Object{$_.ProcessId});` +
+      "if(-not $ids.Count){Write-Output 'none';exit};";
   const script =
     "$ErrorActionPreference='SilentlyContinue';" +
-    "$all=Get-CimInstance Win32_Process|Select-Object ProcessId,ParentProcessId,KernelModeTime,UserModeTime;" +
+    "$all=Get-CimInstance Win32_Process|Select-Object ProcessId,ParentProcessId,KernelModeTime,UserModeTime,CreationDate;" +
     `$ids=@(${root});$q=@(${root});` +
     "while($q.Count){$p=$q[0];$q=@($q|Select-Object -Skip 1);foreach($c in $all|Where-Object{$_.ParentProcessId -eq $p}){if($ids -notcontains $c.ProcessId){$ids+=$c.ProcessId;$q+=$c.ProcessId}}};" +
+    own +
     "$cpu=($all|Where-Object{$ids -contains $_.ProcessId}|ForEach-Object{[double]$_.KernelModeTime+[double]$_.UserModeTime}|Measure-Object -Sum).Sum/10000;" +
     "$n=@(Get-NetTCPConnection -State Established|Where-Object{$ids -contains $_.OwningProcess}).Count;" +
     "Write-Output \"$cpu $n\"";
   const out = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], 8_000);
+  if (out?.trim() === "none") return { cpuMs: null, connections: null };
   const [cpu, n] = (out ?? "").trim().split(/\s+/);
   const cpuMs = Number(cpu);
   const connections = Number(n);
@@ -180,9 +238,10 @@ async function sampleWindows(root: number): Promise<ProcessSample> {
   };
 }
 
-/** A missing tool or a refused query reads as null (unknown), never as idle. */
-export function sampleProcessTree(pid: number): Promise<ProcessSample> {
-  return (process.platform === "win32" ? sampleWindows(pid) : samplePosix(pid))
+/** A missing tool or a refused query reads as null (unknown), never as idle. With `since`, only the processes the tree
+ * started from then on count, without the root: what one tool call is running, not the engine or its tool servers. */
+export function sampleProcessTree(pid: number, since?: number): Promise<ProcessSample> {
+  return (process.platform === "win32" ? sampleWindows(pid, since) : samplePosix(pid, since))
     .catch(() => ({ cpuMs: null, connections: null }));
 }
 
@@ -198,6 +257,7 @@ export function classifyQuiet(input: {
   const { logged, sample, previous } = input;
   if (logged?.kind === "retry") return { kind: "retrying", status: logged.status, delayMs: logged.delayMs, attempt: logged.attempt };
   if (logged?.kind === "compressing") return { kind: "compressing" };
+  if (logged?.kind === "provider-error") return { kind: "provider-error", message: logged.message };
   const nearFullContext = input.context !== null && input.context.threshold > 0
     && input.context.tokens >= input.context.threshold * 0.9;
   if (sample.connections !== null && sample.connections > 0) return { kind: "waiting-model", nearFullContext };
@@ -230,6 +290,8 @@ export function describeQuiet(name: string, state: QuietState, quietMs: number, 
       const attempt = state.attempt !== null ? ` (attempt ${state.attempt + 1})` : "";
       return `${name} ${why} and is retrying${attempt}.${next} It is still working.`;
     }
+    case "provider-error":
+      return `${name}'s model request failed: "${state.message}" ${name} may retry or stop; no reply for ${quiet} so far.`;
     case "compressing":
       return `${name} is compressing its conversation history to make room. This can take a few minutes; it is still working.`;
     case "waiting-model":
@@ -253,6 +315,7 @@ export function lastSeenPhrase(state: QuietState): string {
   switch (state.kind) {
     case "retrying": return "retrying a failed model request";
     case "compressing": return "compressing its history";
+    case "provider-error": return "a failed model request";
     case "waiting-model": return "waiting on its model with a request open";
     case "busy": return "busy on this computer";
     case "between-requests": return "no request open to its model";
