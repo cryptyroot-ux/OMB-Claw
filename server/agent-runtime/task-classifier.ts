@@ -6,6 +6,8 @@
 
 export type ComplexityLevel = "trivial" | "simple" | "medium" | "complex" | "expert";
 
+export type TaskType = "coding" | "reasoning" | "creative" | "analysis" | "conversation" | "research";
+
 export interface TaskSignals {
   readonly text: string;
   readonly messageCount?: number;
@@ -84,6 +86,51 @@ export function complexityToTier(level: ComplexityLevel): "cheap" | "standard" |
       return "standard";
     case "complex":
     case "expert":
+      return "premium";
+  }
+}
+
+const TASK_TYPE_PATTERNS: ReadonlyArray<{ type: TaskType; patterns: RegExp[] }> = [
+  { type: "coding", patterns: [/code/i, /implement/i, /function/i, /class\s+\w/i, /debug/i, /fix.*bug/i, /refactor/i, /```/, /import\s+\w/, /export\s+\w/] },
+  { type: "reasoning", patterns: [/reason/i, /logic/i, /prove/i, /deduce/i, /infer/i, /why\s+does/i, /explain.*why/i, /math/i, /calculate/i, /solve/i] },
+  { type: "creative", patterns: [/write.*story/i, /poem/i, /creative/i, /imagine/i, /fiction/i, /novel/i, /compose/i, /draft/i] },
+  { type: "analysis", patterns: [/analyz/i, /compare/i, /evaluate/i, /assess/i, /review/i, /audit/i, /summarize/i, /report/i] },
+  { type: "research", patterns: [/research/i, /find.*info/i, /search/i, /look up/i, /investigate/i, /explore/i] },
+];
+
+export function classifyTaskType(text: string): TaskType {
+  const scores = new Map<TaskType, number>();
+  for (const { type, patterns } of TASK_TYPE_PATTERNS) {
+    let score = 0;
+    for (const p of patterns) {
+      if (p.test(text)) score++;
+    }
+    if (score > 0) scores.set(type, score);
+  }
+  if (scores.size === 0) return "conversation";
+  // Return the type with the highest score.
+  let best: TaskType = "conversation";
+  let bestScore = 0;
+  for (const [type, score] of scores) {
+    if (score > bestScore) {
+      best = type;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+// Task-type to model tier mapping.
+export function taskTypeToTier(type: TaskType): "cheap" | "standard" | "premium" {
+  switch (type) {
+    case "conversation":
+      return "cheap";
+    case "analysis":
+    case "research":
+      return "standard";
+    case "coding":
+    case "reasoning":
+    case "creative":
       return "premium";
   }
 }

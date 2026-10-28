@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { generatePlan as genPlan } from "./plan-generator.ts";
 import type {
   AgentEngine,
   AgentEvent,
@@ -338,5 +339,9 @@ export function createOrchestrator(dependencies: {
     };
   }
 
-  return { engineId: dependencies.engine.engineId, runPlan, getPlanResults, interrupt, approve, reject, onEvent };
+  const generatePlan = (input: { readonly task: string; readonly providerModel: import("./contracts.ts").ProviderModelRef; readonly grant: import("./contracts.ts").CapabilityGrant; readonly capabilities: import("./contracts.ts").CapabilitySession; readonly maxSteps?: number }): readonly PlanStep[] => {
+    return genPlan(input);
+  };
+
+  return { engineId: dependencies.engine.engineId, runPlan, generatePlan, getPlanResults, interrupt, approve, reject, onEvent };
 }

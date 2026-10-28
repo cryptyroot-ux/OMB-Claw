@@ -4,8 +4,8 @@
 // without touching the base engine.
 
 import type { ProviderModelRef } from "./contracts.ts";
-import { type ComplexityLevel } from "./task-classifier.ts";
-import { createModelRouter, type ModelTier, type RouteDecision } from "./model-router.ts";
+import { type ComplexityLevel, type TaskType } from "./task-classifier.ts";
+import { createModelRouter, type ModelTier, type RouteDecision, type TaskTypeRouteDecision } from "./model-router.ts";
 import { estimateCost, type CostEstimate } from "./cost-estimator.ts";
 import { runVerifyLoop, type VerifyLoopResult } from "./verifier.ts";
 
@@ -21,7 +21,9 @@ export interface IntelligenceConfig {
 
 export interface IntelligenceDecision {
   readonly complexity: ComplexityLevel;
+  readonly taskType: TaskType;
   readonly route: RouteDecision;
+  readonly taskTypeRoute: TaskTypeRouteDecision;
   readonly costEstimate: CostEstimate;
   readonly allowed: boolean;
   readonly reason?: string;
@@ -37,7 +39,9 @@ export function createIntelligenceLayer(config: IntelligenceConfig) {
       if (!config.enabled) {
         return {
           complexity: "medium",
+          taskType: "conversation" as TaskType,
           route: { complexity: "medium", tier: "standard", candidates: [input.primaryModel] },
+          taskTypeRoute: { taskType: "conversation" as TaskType, tier: "standard", candidates: [input.primaryModel] },
           costEstimate: estimateCost({ messages: input.messages, model: input.primaryModel.modelId }),
           allowed: true,
         };
@@ -49,13 +53,17 @@ export function createIntelligenceLayer(config: IntelligenceConfig) {
         hasImages: input.hasImages,
         hasCode: input.hasCode,
       });
-      const candidate = route.candidates[0] ?? input.primaryModel;
+      const taskTypeRoute = router.routeByTaskType(input.text);
+      const effectiveRoute = taskTypeRoute.candidates.length > 0 ? taskTypeRoute : route;
+      const candidate = effectiveRoute.candidates[0] ?? input.primaryModel;
       const costEstimate = estimateCost({ messages: input.messages, model: candidate.modelId });
       const allowed = config.maxCostUsd === undefined || costEstimate.estimatedCostUsd <= config.maxCostUsd;
-      config.log?.({ kind: "intelligence.decide", detail: JSON.stringify({ complexity: route.complexity, tier: route.tier, allowed, estimatedCostUsd: costEstimate.estimatedCostUsd }) });
+      config.log?.({ kind: "intelligence.decide", detail: JSON.stringify({ complexity: route.complexity, taskType: taskTypeRoute.taskType, tier: effectiveRoute.tier, allowed, estimatedCostUsd: costEstimate.estimatedCostUsd }) });
       return {
         complexity: route.complexity,
+        taskType: taskTypeRoute.taskType,
         route,
+        taskTypeRoute,
         costEstimate,
         allowed,
         reason: allowed ? undefined : `Estimated cost ${costEstimate.estimatedCostUsd.toFixed(4)} exceeds budget ${config.maxCostUsd}`,

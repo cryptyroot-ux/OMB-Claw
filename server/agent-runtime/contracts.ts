@@ -373,6 +373,8 @@ export type OrchestrationEvent =
 export interface Orchestrator {
   readonly engineId: EngineId;
   runPlan(steps: readonly PlanStep[], context: OrchestratorContext): { planId: PlanId; done: Promise<void> };
+  /** Generate a plan from a task description. Returns steps that can be passed to runPlan. */
+  generatePlan?(input: { readonly task: string; readonly providerModel: ProviderModelRef; readonly grant: CapabilityGrant; readonly capabilities: CapabilitySession; readonly maxSteps?: number }): readonly PlanStep[];
   getPlanResults(planId: PlanId): readonly StepRecord[] | undefined;
   interrupt(planId: PlanId): void;
   approve(planId: PlanId, stepId?: StepId): void;

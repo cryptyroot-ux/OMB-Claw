@@ -3,7 +3,7 @@
 // when a chosen model is unavailable or refuses.
 
 import type { ProviderModelRef } from "./contracts.ts";
-import { classifyTask, complexityToTier, type ComplexityLevel } from "./task-classifier.ts";
+import { classifyTask, complexityToTier, classifyTaskType, taskTypeToTier, type ComplexityLevel, type TaskType } from "./task-classifier.ts";
 
 export interface ModelTier {
   readonly cheap: ReadonlyArray<ProviderModelRef>;
@@ -23,6 +23,12 @@ export interface RouteDecision {
   readonly candidates: ReadonlyArray<ProviderModelRef>;
 }
 
+export interface TaskTypeRouteDecision {
+  readonly taskType: TaskType;
+  readonly tier: "cheap" | "standard" | "premium";
+  readonly candidates: ReadonlyArray<ProviderModelRef>;
+}
+
 export function createModelRouter(config: ModelRouterConfig) {
   return {
     route(signals: { text: string; messageCount?: number; toolCount?: number; hasImages?: boolean; hasCode?: boolean }): RouteDecision {
@@ -33,6 +39,12 @@ export function createModelRouter(config: ModelRouterConfig) {
         ? override
         : config.tiers[tier];
       return { complexity, tier, candidates };
+    },
+    routeByTaskType(text: string): TaskTypeRouteDecision {
+      const taskType = classifyTaskType(text);
+      const tier = taskTypeToTier(taskType);
+      const candidates = config.tiers[tier];
+      return { taskType, tier, candidates };
     },
   };
 }
