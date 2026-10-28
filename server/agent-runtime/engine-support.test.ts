@@ -7,8 +7,6 @@ describe("engine support policy", () => {
     for (const kind of [
       "claudeAgent",
       "codex",
-      "opencodeGo",
-      "hermesAgent",
       "piAgent",
       "antigravityAgent",
       "customAcp",
