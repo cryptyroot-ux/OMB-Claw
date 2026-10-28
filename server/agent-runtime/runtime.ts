@@ -137,6 +137,10 @@ export function createAgentEngine(dependencies: {
     readonly decide: (input: { text: string; messageCount?: number; toolCount?: number; hasImages?: boolean; hasCode?: boolean; messages: ReadonlyArray<{ content: string | null | undefined }>; primaryModel: AgentRunRecord["providerModel"] }) => { readonly allowed: boolean; readonly reason?: string; readonly route: { readonly candidates: ReadonlyArray<AgentRunRecord["providerModel"]> } };
     readonly log?: (entry: { readonly kind: string; readonly detail: string }) => void;
   };
+  /** Enable response caching for identical model requests. */
+  readonly cacheEnabled?: boolean;
+  /** Optional plugin registry: additional capability providers loaded at runtime. */
+  readonly plugins?: { readonly list: () => ReadonlyArray<{ readonly capabilities: ReadonlyArray<string> }> };
 }): AgentEngine {
   const active = new Map<string, {
     readonly threadId: string;
@@ -235,6 +239,10 @@ export function createAgentEngine(dependencies: {
           const adapterChain = [dependencies.adapters.resolve(request.providerModel), ...(request.fallbackProviders ?? []).map((ref) => dependencies.adapters.resolve(ref))];
           let adapterIndex = 0;
           let adapter = adapterChain[0]!;
+          if (dependencies.cacheEnabled) {
+            const { createCachingAdapter } = await import("./caching-adapter.ts");
+            adapter = createCachingAdapter(adapter);
+          }
           let currentModelId = request.providerModel.modelId;
           // Live probe: verify tools/streaming against the real adapter before trusting static hints.
           // Cached per modelId; a failed probe falls back to static capabilities and retries next run.

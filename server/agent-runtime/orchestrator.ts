@@ -39,6 +39,9 @@ export function createOrchestrator(dependencies: {
     readonly decide: (input: { text: string; messageCount?: number; toolCount?: number; hasImages?: boolean; hasCode?: boolean; messages: ReadonlyArray<{ content: string | null | undefined }>; primaryModel: import("./contracts.ts").ProviderModelRef }) => { readonly allowed: boolean; readonly reason?: string; readonly route: { readonly candidates: ReadonlyArray<import("./contracts.ts").ProviderModelRef> } };
     readonly verify?: (output: string) => Promise<{ ok: boolean; feedback: string }> | { ok: boolean; feedback: string };
   };
+  readonly swarm?: {
+    readonly enabled: boolean;
+  };
 }): Orchestrator {
   const listeners = new Map<string, Set<(event: OrchestrationEvent) => void>>();
   const active = new Map<string, {
