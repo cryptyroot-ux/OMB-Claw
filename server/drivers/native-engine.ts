@@ -4,6 +4,9 @@ import { createAgentEngine } from "../agent-runtime/runtime.ts";
 import { createOpenAICompatibleModelAdapter } from "../agent-runtime/model-adapter.ts";
 import { probeCapabilities } from "../agent-runtime/capability-probe.ts";
 import { probeLive } from "../agent-runtime/capability-probe.ts";
+import { heuristicVerifier } from "../agent-runtime/verifier.ts";
+import { createIntelligenceLayer } from "../agent-runtime/intelligence-layer.ts";
+import { defaultModelTiers } from "../agent-runtime/model-router.ts";
 import { createSqliteAgentRunStore } from "../agent-runtime/run-store.ts";
 
 /** Chat-completions drivers share one native engine shape: an OpenAI-compatible adapter over the same catalog the
@@ -41,6 +44,12 @@ export function createNativeChatEngine(options: NativeChatEngineOptions): AgentE
   return createAgentEngine({
     adapters: { resolve: () => adapter },
     store: createSqliteAgentRunStore(),
+    cacheEnabled: true,
+    intelligence: {
+      enabled: true,
+      decide: (input) => createIntelligenceLayer({ enabled: true, tiers: defaultModelTiers({ providerId: options.providerId, modelId: options.catalog().default }) }).decide(input as any),
+      verify: heuristicVerifier,
+    },
     ...(options.apiKey
       ? {
           probe: {

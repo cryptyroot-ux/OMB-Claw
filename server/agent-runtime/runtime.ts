@@ -136,6 +136,7 @@ export function createAgentEngine(dependencies: {
     readonly enabled: boolean;
     readonly decide: (input: { text: string; messageCount?: number; toolCount?: number; hasImages?: boolean; hasCode?: boolean; messages: ReadonlyArray<{ content: string | null | undefined }>; primaryModel: AgentRunRecord["providerModel"] }) => { readonly allowed: boolean; readonly reason?: string; readonly route: { readonly candidates: ReadonlyArray<AgentRunRecord["providerModel"]> } };
     readonly log?: (entry: { readonly kind: string; readonly detail: string }) => void;
+    readonly verify?: (output: string) => { ok: boolean; feedback: string } | Promise<{ ok: boolean; feedback: string }>;
   };
   /** Enable response caching for identical model requests. */
   readonly cacheEnabled?: boolean;
