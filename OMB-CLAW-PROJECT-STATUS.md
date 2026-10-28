@@ -254,23 +254,24 @@ docs/
 
 ## Next Steps
 
-### Immediate (Layer 2 Completion — Priority Order)
-1. **Hooks block/modify** — Implement `pre_tool_use` hook returning `{ allow: false }` / `{ modifiedArguments }` enforcement in `turn-runtime.ts`
-2. **Checkpoints rollback** — Add `rollback()` to `run-store.ts` + `run.checkpoint_rolled_back` event emission
-3. **Fallback Provider Chains** — Implement `fallbackProviders` chain in `runtime.ts` / `model-adapter.ts` (terminal error → try next provider)
-4. **Live Capability Probe** — Wire `probeLive()` to real API keys; add to model catalog refresh flow
+### Layer 2 Completion — All Complete ✅
+| Item | Commit | Status |
+|------|--------|--------|
+| Hooks block/modify (`pre_tool_use` allow/modifyArguments) | `511cc78eb` | Done |
+| Checkpoints rollback (`rollback()` + `run.checkpoint_rolled_back`) | `511cc78eb` + `a970847dc` | Done |
+| Fallback Provider Chains (terminal error → next provider) | `50413d6ad` | Done |
+| Live Capability Probe (`probeLive()` wired to engine) | `6d8da6380` | Done |
 
-### Layer 3 (Orchestration) — Option A Confirmed
+### Layer 3 (Orchestration) — Option A Confirmed & Implemented ✅
 **Decision:** Orchestration layer sits **above** the Agent Engine (`Orchestrator.runPlan()` calls `AgentEngine.run()` per step). Design doc: `docs/superpowers/specs/2026-10-28-layer-3-orchestrator-option-a-design.md`.
 
-**Resolved:**
-- **Primitive:** Option A — new `Orchestrator` above engine; `AgentEngine.run()` unchanged (contract freeze safe).
-- **State:** New `OrchestratorStore` (SQLite), separate from `run-store.ts`.
-- **Capability model:** Reuse `CapabilityProvider` / `CapabilitySession` per step.
-- **Approval:** Gates at both plan level and step level.
-- **Observability:** Separate `OrchestrationEvent` stream.
-
-**Next:** Implement `orchestrator.ts` (sequential plan execution), `orchestrator-store.ts` (SQLite), contracts, and tests.
+**Implemented** (commit `6b4e2b746`):
+- `contracts.ts`: additive Layer 3 types (PlanStep, PlanResult, OrchestratorContext, OrchestratorStore, OrchestrationEvent, Orchestrator) — contract freeze respected
+- `orchestrator.ts`: `createOrchestrator()` with sequential `runPlan()`, plan + step-level approval gates, context variable carry, step failure stop, DAG dependency stub, `OrchestrationEvent` stream
+- `orchestrator-store.ts`: SQLite store wrapper following `run-store.ts` pattern
+- `message-db.ts`: `agent_orchestrator_plans` / `agent_orchestrator_steps` tables + CRUD + `recoverUnsettledOrchestratorPlans`
+- `orchestrator.test.ts`: 9 tests passing
+- Verification: 146 tests pass, typecheck clean, lint clean
 
 ### Agent A Coordination (Session Tree)
 1. Create `feature/session-tree` branch from `main` at `927343a3e`
@@ -316,4 +317,4 @@ docs/
 
 ---
 
-*This document reflects the state as of commit `9de5e578b` on branch `feature/native-agent-engine`. Update after each major merge.*
+*This document reflects the state as of commit `6b4e2b746` on branch `feature/native-agent-engine`. Update after each major merge.*
