@@ -4,7 +4,7 @@ import { computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "../drive
 import { announcesAction, MAX_ANNOUNCEMENT_NUDGES, NUDGE_ANNOUNCED_ACTION } from "./announcement.ts";
 import { workspaceDir } from "../workspace.ts";
 import { parseToolScope, allowsTool } from "../../shared/tool-scope.ts";
-import { snapshot as createCheckpoint } from "../checkpoints.ts";
+import { snapshot as createCheckpoint, rollback } from "../checkpoints.ts";
 import { createRunScopedCapabilitySession, TOOL_OUTPUT_READ_CAPABILITY } from "./capability-runtime.ts";
 import {
   compactionKeepTokens,
@@ -592,9 +592,12 @@ export function createAgentEngine(dependencies: {
                     startedAt: dispatchedAt,
                   });
                   capabilityDispatched = true;
+                  const invokeCall = preHookResults[idx].modifiedArguments !== undefined
+                    ? { ...call, arguments: preHookResults[idx].modifiedArguments }
+                    : call;
                   try {
-                    const r = await runCapabilities.invoke(call, { grant: request.grant, signal });
-                    return { call, descriptor, result: r, uncertain: !!r.uncertain };
+                    const r = await runCapabilities.invoke(invokeCall, { grant: request.grant, signal });
+                    return { call: invokeCall, descriptor, result: r, uncertain: !!r.uncertain };
                   } catch {
                     return { call, descriptor, result: null, uncertain: true };
                   }
@@ -605,11 +608,16 @@ export function createAgentEngine(dependencies: {
                   signal.throwIfAborted();
                   let preHookAllow = true;
                   let preHookMsg = "";
+                  let modifiedArgs: unknown;
                   if (request.hooks) {
                     const hr = await request.hooks.run("pre_tool_use", { runId, threadId: request.threadId, botId: request.botId, capabilityId: call.capabilityId, callId: call.callId, arguments: call.arguments });
                     preHookAllow = hr.allow;
                     preHookMsg = hr.messages.join("; ");
+                    modifiedArgs = hr.modifiedArguments;
                   }
+                  const invokeCall = modifiedArgs !== undefined
+                    ? { ...call, arguments: modifiedArgs }
+                    : call;
                   if (!preHookAllow) {
                     const denied: CapabilityResult = { callId: call.callId, ok: false, content: preHookMsg || "Blocked by hook.", error: "denied" };
                     dependencies.store.beginCapabilityCall({ runId, callId: call.callId, capabilityId: call.capabilityId, risk: descriptor.risk, status: "dispatching", startedAt: Date.now() });
@@ -637,10 +645,10 @@ export function createAgentEngine(dependencies: {
                   });
                   capabilityDispatched = true;
                   try {
-                    const r = await runCapabilities.invoke(call, { grant: request.grant, signal });
-                    invoked.push({ call, descriptor, result: r, uncertain: !!r.uncertain });
+                    const r = await runCapabilities.invoke(invokeCall, { grant: request.grant, signal });
+                    invoked.push({ call: invokeCall, descriptor, result: r, uncertain: !!r.uncertain });
                   } catch {
-                    invoked.push({ call, descriptor, result: null, uncertain: true });
+                    invoked.push({ call: invokeCall, descriptor, result: null, uncertain: true });
                   }
                 }
               }
@@ -676,9 +684,22 @@ export function createAgentEngine(dependencies: {
                 }
 
                 dependencies.store.settleCapabilityCall(runId, call.callId, result.ok ? "succeeded" : "failed", Date.now());
-                                emit(request.threadId, { type: "tool.result", runId, callId: call.callId, result });
+                if (!result.ok) capabilityFailure = true;
+                emit(request.threadId, { type: "tool.result", runId, callId: call.callId, result });
+                // Post-tool-use hooks: observe results and enforce blocks. A blocked
+                // mutating tool is undone via its pre-call checkpoint, then denied.
                 if (request.hooks) {
-                  void request.hooks.run("post_tool_use", { runId, threadId: request.threadId, botId: request.botId, capabilityId: call.capabilityId, callId: call.callId, arguments: call.arguments, result: { ok: result.ok, content: result.content } });
+                  const postHook = await request.hooks.run("post_tool_use", { runId, threadId: request.threadId, botId: request.botId, capabilityId: call.capabilityId, callId: call.callId, arguments: call.arguments, result: { ok: result.ok, content: result.content } });
+                  if (postHook.allow === false && checkpointHash) {
+                    try { await rollback(request.botId, workspaceDir(request.botId), checkpointHash, signal); } catch {}
+                  }
+                  if (postHook.allow === false) {
+                    result = { ...result, ok: false, content: postHook.messages.join("; ") || "Blocked by post-tool hook.", error: "denied" };
+                    capabilityFailure = true;
+                    dependencies.store.settleCapabilityCall(runId, call.callId, "failed", Date.now());
+                    emit(request.threadId, { type: "tool.result", runId, callId: call.callId, result });
+                    continue;
+                  }
                 }
                 if (result.images?.length && modelCapabilities.imageInput !== "supported") {
                   throw new AgentRuntimeError("unsupported_capability", "The capability returned an image result the selected model cannot receive");

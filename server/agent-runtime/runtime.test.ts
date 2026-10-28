@@ -1088,6 +1088,114 @@ describe("createAgentEngine", () => {
   });
 
 
+  it("applies pre_tool_use modifiedArguments to the tool call", async () => {
+    const modelAdapter = testModelAdapter([
+      [
+        { type: "tool_calls", calls: [{ id: "call-a", name: "read-a", arguments: { value: "original" } }] },
+        { type: "completed", finishReason: "tool_calls" },
+      ],
+      [
+        { type: "content.delta", kind: "assistant_text", delta: "Done with the modified value." },
+        { type: "completed", finishReason: "stop" },
+      ],
+    ]);
+    const received: unknown[] = [];
+    const baseSession = testCapabilitySession([descriptor("read-a")]);
+    const baseInvoke = baseSession.invoke.bind(baseSession);
+    const capabilities: CapabilitySession = {
+      list: () => [descriptor("read-a")],
+      validate: () => {},
+      async invoke(call, ctx) {
+        received.push(call.arguments);
+        return baseInvoke(call, ctx);
+      },
+      close: async () => {},
+    };
+    const store = testRunStore();
+    const engine = createAgentEngine({ adapters: registryFor(modelAdapter), store });
+    const events: AgentEvent[] = [];
+    engine.onEvent("thread-1", (event) => events.push(event));
+
+    let preHookInvoked = false;
+    const hooks = {
+      run: async (
+        event: "pre_tool_use" | "post_tool_use" | "pre_compact" | "stop" | "session_start" | "session_end",
+        _context: { readonly runId: string; readonly threadId: string; readonly botId: string; readonly capabilityId?: string; readonly callId?: string; readonly arguments?: unknown; readonly result?: { readonly ok: boolean; readonly content: string }; readonly reason?: string },
+      ) => {
+        if (event === "pre_tool_use") {
+          preHookInvoked = true;
+          return { allow: true, messages: [], modifiedArguments: { value: "modified" } };
+        }
+        return { allow: true, messages: [] };
+      },
+    };
+
+    const { runId, done } = await engine.run({
+      botId: "bot-1",
+      threadId: "thread-1",
+      text: "Read the fixture.",
+      messages: userMessages,
+      providerModel: { providerId: "fixture", modelId: "fixture-model" },
+      grant,
+      capabilities,
+      signal: new AbortController().signal,
+      hooks,
+    });
+    await done;
+
+    expect(preHookInvoked).toBe(true);
+    expect(received).toEqual([{ value: "modified" }]);
+    expect(store.getRun(runId)).toMatchObject({ status: "completed" });
+    const toolResults = events.filter((event) => event.type === "tool.result");
+    expect(toolResults).toHaveLength(1);
+    expect((toolResults[0] as any).result.ok).toBe(true);
+  });
+
+  it("denies a tool result and fails the run when post_tool_use blocks", async () => {
+    const modelAdapter = testModelAdapter([
+      [
+        { type: "tool_calls", calls: [{ id: "call-a", name: "read-a", arguments: { value: "a" } }] },
+        { type: "completed", finishReason: "tool_calls" },
+      ],
+      [
+        { type: "content.delta", kind: "assistant_text", delta: "Final answer after denial." },
+        { type: "completed", finishReason: "stop" },
+      ],
+    ]);
+    const store = testRunStore();
+    const engine = createAgentEngine({ adapters: registryFor(modelAdapter), store });
+    const events: AgentEvent[] = [];
+    engine.onEvent("thread-1", (event) => events.push(event));
+
+    const hooks = {
+      run: async (
+        event: "pre_tool_use" | "post_tool_use" | "pre_compact" | "stop" | "session_start" | "session_end",
+        _context: { readonly runId: string; readonly threadId: string; readonly botId: string; readonly capabilityId?: string; readonly callId?: string; readonly arguments?: unknown; readonly result?: { readonly ok: boolean; readonly content: string }; readonly reason?: string },
+      ) => {
+        if (event === "post_tool_use") {
+          return { allow: false, messages: ["unsafe operation"], modifiedArguments: undefined };
+        }
+        return { allow: true, messages: [] };
+      },
+    };
+
+    const { runId, done } = await engine.run({
+      botId: "bot-1",
+      threadId: "thread-1",
+      text: "Read the fixture.",
+      messages: userMessages,
+      providerModel: { providerId: "fixture", modelId: "fixture-model" },
+      grant,
+      capabilities: testCapabilitySession([descriptor("read-a")]),
+      signal: new AbortController().signal,
+      hooks,
+    });
+    await done;
+
+    expect(store.getRun(runId)).toMatchObject({ status: "failed", failureCode: "capability_failed" });
+    const toolResults = events.filter((event) => event.type === "tool.result");
+    expect(toolResults.some((event) => (event as any).result.ok === false && (event as any).result.content === "unsafe operation")).toBe(true);
+  });
 describe("compactionKeepTokens", () => {
   it("is proportional to the context window and clamped", () => {
     expect(compactionKeepTokens({ status: "unknown" })).toBe(32_000);
