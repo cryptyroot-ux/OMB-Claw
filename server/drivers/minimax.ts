@@ -103,7 +103,7 @@ export const MinimaxDriver: ProviderDriver<MinimaxConfig> = {
       ? { ...MODELS, default: local.defaultModel }
       : MODELS;
 
-    const nativeAgentEngine = createNativeChatEngine({
+    const nativeAgentEngine = await createNativeChatEngine({
       providerId: DRIVER_KIND, apiUrl, apiKey, catalog: () => models, reasoning: true,
       toolsEnabled: input.config.tools !== false && String(input.config.tools) !== "false", imageInput: () => true,
       httpErrorLabel: "MiniMax",

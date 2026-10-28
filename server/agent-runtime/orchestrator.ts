@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { generatePlan as genPlan } from "./plan-generator.ts";
+import { planExecutionWaves } from "./swarm.ts";
 import type {
   AgentEngine,
   AgentEvent,
@@ -97,162 +98,166 @@ export function createOrchestrator(dependencies: {
         planApprovalGate.delete(planId);
       }
 
-      let stepCursor = 0;
-      while (stepCursor < steps.length) {
+      // Swarm mode: group steps into dependency waves for parallel execution.
+      const useSwarm = dependencies.swarm?.enabled ?? false;
+      const waves = useSwarm
+        ? planExecutionWaves(steps as any)
+        : steps.map((s) => [s]);
+
+      for (const wave of waves) {
         if (controller.signal.aborted) {
           dependencies.store.updatePlanStatus(planId, "interrupted", Date.now());
           emit(planId, { type: "plan.interrupted", planId });
           return;
         }
 
-        const step = steps[stepCursor]!;
-
-        // Dependency check (future DAG support).
-        if (step.dependsOn?.some((dep) => {
-          const depStep = dependencies.store.getStep(dep);
-          return !depStep || depStep.status !== "completed";
-        })) {
-          recordStep(planId, step, "skipped", {
-            stepId: step.id,
-            runId: "",
-            status: "skipped",
-            error: "dependency not completed",
-          });
-          stepCursor++;
-          continue;
-        }
-
-        // Step-level approval gate.
-        const stepApproval = step.approval ?? context.approvalMode;
-        if (stepApproval === "ask") {
-          recordStep(planId, step, "approval_required");
-          emit(planId, { type: "step.approval_required", planId, stepId: step.id });
-
-          // Wait for external approval via approve() or reject(). After the gate
-          // resolves, fall through to execute this same step without re-checking.
-          await new Promise<void>((resolve, reject) => {
-            stepApprovalGate.set(planId, { resolve, reject });
-          });
-          stepApprovalGate.delete(planId);
-        }
-
-        recordStep(planId, step, "running");
-        emit(planId, { type: "step.started", planId, stepId: step.id });
-
-        // Intelligence Layer: classify, route, estimate cost before executing.
-        let providerModel = step.providerModel;
-        if (dependencies.intelligence?.enabled) {
-          const decision = dependencies.intelligence.decide({
-            text: step.text,
-            messages: buildMessagesWithContext(step, contextVariables).map((m) => ({ content: typeof m.content === "string" ? m.content : null })),
-            primaryModel: step.providerModel,
-          });
-          if (decision.route.candidates.length > 0) {
-            providerModel = decision.route.candidates[0]!;
-          }
-          if (!decision.allowed) {
-            recordStep(planId, step, "failed", {
+        // Execute all steps in this wave in parallel.
+        const waveResults = await Promise.all(wave.map(async (step) => {
+          // Dependency check.
+          if (step.dependsOn?.some((dep) => {
+            const depStep = dependencies.store.getStep(dep);
+            return !depStep || depStep.status !== "completed";
+          })) {
+            recordStep(planId, step, "skipped", {
               stepId: step.id,
               runId: "",
-              status: "failed",
-              error: decision.reason ?? "budget_exceeded",
+              status: "skipped",
+              error: "dependency not completed",
             });
-            emit(planId, { type: "step.failed", planId, stepId: step.id, error: decision.reason ?? "budget_exceeded" });
-            dependencies.store.updatePlanStatus(planId, "failed", Date.now());
-            emit(planId, { type: "plan.failed", planId, error: decision.reason ?? "budget_exceeded" });
-            return;
+            return { step, result: { stepId: step.id, runId: "", status: "skipped" as const, error: "dependency not completed" } };
           }
-        }
 
-        // Self-correcting execution loop: retry step on verification failure.
-        const maxRetries = dependencies.intelligence?.enabled ? 2 : 0;
-        let attempt = 0;
-        let stepResult: PlanResult | undefined;
-        let retryFeedback: string | undefined;
+          // Step-level approval gate.
+          const stepApproval = step.approval ?? context.approvalMode;
+          if (stepApproval === "ask") {
+            recordStep(planId, step, "approval_required");
+            emit(planId, { type: "step.approval_required", planId, stepId: step.id });
+            await new Promise<void>((resolve, reject) => {
+              stepApprovalGate.set(planId, { resolve, reject });
+            });
+            stepApprovalGate.delete(planId);
+          }
 
-        while (attempt <= maxRetries) {
-          const stepText = retryFeedback ? `${step.text}\\n\\nCorrection feedback: ${retryFeedback}` : step.text;
-          const stepMessages = buildMessagesWithContext({ ...step, text: stepText }, contextVariables);
+          recordStep(planId, step, "running");
+          emit(planId, { type: "step.started", planId, stepId: step.id });
 
-          // Build engine request from step.
-          const engineRequest: AgentRunRequest = {
-            botId: step.grant.botId,
-            threadId: step.grant.threadId,
-            text: stepText,
-            messages: stepMessages,
-            providerModel,
-            grant: step.grant,
-            capabilities: step.capabilities,
-            signal: controller.signal,
-            ...(step.budget ? { budget: step.budget } : {}),
-          };
-
-          const { runId, done: runDone } = await dependencies.engine.run(engineRequest);
-
-          // Collect output from model delta events.
-          let stepOutput = "";
-          const unsubscribe = dependencies.engine.onEvent(engineRequest.threadId, (event: AgentEvent) => {
-            if (event.type === "model.delta") {
-              stepOutput += event.delta;
+          // Intelligence Layer.
+          let providerModel = step.providerModel;
+          if (dependencies.intelligence?.enabled) {
+            const decision = dependencies.intelligence.decide({
+              text: step.text,
+              messages: buildMessagesWithContext(step, contextVariables).map((m) => ({ content: typeof m.content === "string" ? m.content : null })),
+              primaryModel: step.providerModel,
+            });
+            if (decision.route.candidates.length > 0) {
+              providerModel = decision.route.candidates[0]!;
             }
-          });
+            if (!decision.allowed) {
+              const failResult: PlanResult = { stepId: step.id, runId: "", status: "failed", error: decision.reason ?? "budget_exceeded" };
+              recordStep(planId, step, "failed", failResult);
+              emit(planId, { type: "step.failed", planId, stepId: step.id, error: decision.reason ?? "budget_exceeded" });
+              return { step, result: failResult };
+            }
+          }
 
-          await runDone;
-          unsubscribe();
+          // Self-correcting execution loop.
+          const maxRetries = dependencies.intelligence?.enabled ? 2 : 0;
+          let attempt = 0;
+          let stepResult: PlanResult | undefined;
+          let retryFeedback: string | undefined;
 
-          const runRecord = dependencies.engine.getState(runId);
-          stepResult = {
-            stepId: step.id,
-            runId,
-            status: runRecord?.status === "completed" ? "completed" : "failed",
-            output: stepOutput.trim() || undefined,
-            error: runRecord?.failureCode,
-            modelRounds: runRecord?.modelRounds,
-            toolCalls: runRecord?.toolCalls,
-          };
+          while (attempt <= maxRetries) {
+            const stepText = retryFeedback ? `${step.text}\\n\\nCorrection feedback: ${retryFeedback}` : step.text;
+            const stepMessages = buildMessagesWithContext({ ...step, text: stepText }, contextVariables);
 
-          if (stepResult.status === "failed") {
+            const engineRequest: AgentRunRequest = {
+              botId: step.grant.botId,
+              threadId: step.grant.threadId,
+              text: stepText,
+              messages: stepMessages,
+              providerModel,
+              grant: step.grant,
+              capabilities: step.capabilities,
+              signal: controller.signal,
+              ...(step.budget ? { budget: step.budget } : {}),
+            };
+
+            const { runId, done: runDone } = await dependencies.engine.run(engineRequest);
+
+            let stepOutput = "";
+            const unsubscribe = dependencies.engine.onEvent(engineRequest.threadId, (event: AgentEvent) => {
+              if (event.type === "model.delta") {
+                stepOutput += event.delta;
+              }
+            });
+
+            await runDone;
+            unsubscribe();
+
+            const runRecord = dependencies.engine.getState(runId);
+            stepResult = {
+              stepId: step.id,
+              runId,
+              status: runRecord?.status === "completed" ? "completed" : "failed",
+              output: stepOutput.trim() || undefined,
+              error: runRecord?.failureCode,
+              modelRounds: runRecord?.modelRounds,
+              toolCalls: runRecord?.toolCalls,
+            };
+
+            if (stepResult.status === "failed") break;
+
+            if (dependencies.intelligence?.verify && stepResult.output) {
+              const verification = await dependencies.intelligence.verify(stepResult.output);
+              if (!verification.ok) {
+                retryFeedback = verification.feedback;
+                attempt++;
+                emit(planId, { type: "step.retry", planId, stepId: step.id, attempt, feedback: retryFeedback });
+                continue;
+              }
+            }
             break;
           }
 
-          // Verify output if intelligence layer provides a verifier.
-          if (dependencies.intelligence?.verify && stepResult.output) {
-            const verification = await dependencies.intelligence.verify(stepResult.output);
-            if (!verification.ok) {
-              retryFeedback = verification.feedback;
-              attempt++;
-              emit(planId, { type: "step.retry", planId, stepId: step.id, attempt, feedback: retryFeedback });
-              continue;
-            }
+          if (!stepResult) {
+            stepResult = { stepId: step.id, runId: "", status: "failed", error: "no_result" };
           }
 
-          break;
-        }
+          if (stepResult.output) {
+            contextVariables.set(`step_${step.id}_output`, stepResult.output);
+            emit(planId, { type: "context.variable.set", planId, key: `step_${step.id}_output`, value: stepResult.output });
+          }
 
-        if (!stepResult) {
-          stepResult = { stepId: step.id, runId: "", status: "failed", error: "no_result" };
-        }
+          recordStep(planId, step, stepResult.status, stepResult);
+          if (stepResult.status === "completed") {
+            emit(planId, { type: "step.completed", planId, stepId: step.id, runId: stepResult.runId });
+          } else {
+            emit(planId, { type: "step.failed", planId, stepId: step.id, error: stepResult.error ?? "unknown" });
+          }
 
-        if (stepResult.output) {
-          contextVariables.set(`step_${step.id}_output`, stepResult.output);
-          emit(planId, { type: "context.variable.set", planId, key: `step_${step.id}_output`, value: stepResult.output });
-        }
+          return { step, result: stepResult };
+        }));
 
-        recordStep(planId, step, stepResult.status, stepResult);
-        if (stepResult.status === "completed") {
-          emit(planId, { type: "step.completed", planId, stepId: step.id, runId: stepResult.runId });
-        } else {
-          emit(planId, { type: "step.failed", planId, stepId: step.id, error: stepResult.error ?? "unknown" });
-        }
-
-        if (stepResult.status === "failed") {
-          // Stop plan on step failure.
+        // Check for failures and conflicts.
+        const failedStep = waveResults.find((r) => r.result.status === "failed");
+        if (failedStep) {
           dependencies.store.updatePlanStatus(planId, "failed", Date.now());
-          emit(planId, { type: "plan.failed", planId, error: stepResult.error ?? "step failed" });
+          emit(planId, { type: "plan.failed", planId, error: failedStep.result.error ?? "step failed" });
           return;
         }
 
-        stepCursor++;
+        // Swarm consensus: detect conflicts and resolve.
+        if (useSwarm && waveResults.length > 1) {
+          const { detectConflicts, resolveConsensus } = await import("./swarm.ts");
+          const conflicts = detectConflicts(waveResults.map((r) => r.result));
+          if (conflicts.length > 0) {
+            emit(planId, { type: "plan.conflicts", planId, conflicts } as OrchestrationEvent);
+          }
+          const consensus = resolveConsensus(waveResults.map((r) => r.result));
+          if (consensus) {
+            contextVariables.set(`wave_${wave.map((s) => s.id).join("_")}_consensus`, consensus);
+          }
+        }
       }
 
       dependencies.store.updatePlanStatus(planId, "completed", Date.now());

@@ -99,7 +99,7 @@ export const MetaDriver: ProviderDriver<MetaConfig> = {
       } catch {}
     };
     if (apiKey) void refreshModels();
-    const nativeAgentEngine = createNativeChatEngine({
+    const nativeAgentEngine = await createNativeChatEngine({
       providerId: "meta", apiUrl: config.url, apiKey, catalog: () => catalog, reasoning: true,
       toolsEnabled: config.tools !== false && String(config.tools) !== "false", imageInput: (model) => /^muse-/i.test(model),
       httpErrorLabel: "Meta",

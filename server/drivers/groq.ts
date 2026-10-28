@@ -85,7 +85,7 @@ export const GroqDriver: ProviderDriver<GroqConfig> = {
       } catch {}
     };
     if (apiKey) void refreshModels();
-    const nativeAgentEngine = createNativeChatEngine({
+    const nativeAgentEngine = await createNativeChatEngine({
       providerId: "groq", apiUrl: config.url, apiKey, catalog: () => catalog, reasoning: true,
       toolsEnabled: config.tools !== false && String(config.tools) !== "false", imageInput: () => false,
       httpErrorLabel: "Groq",

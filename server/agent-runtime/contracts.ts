@@ -368,7 +368,8 @@ export type OrchestrationEvent =
   | { readonly type: "step.retry"; readonly planId: PlanId; readonly stepId: StepId; readonly attempt: number; readonly feedback: string }
   | { readonly type: "step.approval_required"; readonly planId: PlanId; readonly stepId: StepId }
   | { readonly type: "plan.approval_required"; readonly planId: PlanId }
-  | { readonly type: "context.variable.set"; readonly planId: PlanId; readonly key: string; readonly value: string };
+  | { readonly type: "context.variable.set"; readonly planId: PlanId; readonly key: string; readonly value: string }
+  | { readonly type: "plan.conflicts"; readonly planId: PlanId; readonly conflicts: ReadonlyArray<{ readonly stepId: string; readonly reason: string }> };
 
 export interface Orchestrator {
   readonly engineId: EngineId;

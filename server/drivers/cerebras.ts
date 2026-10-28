@@ -82,7 +82,7 @@ export const CerebrasDriver: ProviderDriver<CerebrasConfig> = {
       } catch {}
     };
     if (apiKey) void refreshModels();
-    const nativeAgentEngine = createNativeChatEngine({
+    const nativeAgentEngine = await createNativeChatEngine({
       providerId: "cerebras", apiUrl: config.url, apiKey, catalog: () => catalog, reasoning: true,
       toolsEnabled: config.tools !== false && String(config.tools) !== "false", imageInput: (model) => !TEXT_ONLY_MODELS.test(model),
       httpErrorLabel: "Cerebras",

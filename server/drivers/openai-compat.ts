@@ -257,7 +257,7 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
       fetchModels(),
     ]) : null;
 
-    const nativeAgentEngine = createNativeChatEngine({
+    const nativeAgentEngine = await createNativeChatEngine({
       providerId: DRIVER_KIND,
       apiUrl: config.url,
       apiKey,

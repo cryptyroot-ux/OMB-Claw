@@ -53,7 +53,7 @@ export const AnthropicDriver: ProviderDriver<AnthropicConfig> = {
       capabilities: (modelId) => probeCapabilities(modelId, () => MODELS, { toolsEnabled: config.tools !== false && String(config.tools) !== "false", imageInput: () => true }),
       maxTokens: config.maxTokens,
     });
-    const nativeAgentEngine = createNativeChatEngine({
+    const nativeAgentEngine = await createNativeChatEngine({
       providerId: DRIVER_KIND,
       apiUrl: config.url,
       apiKey,

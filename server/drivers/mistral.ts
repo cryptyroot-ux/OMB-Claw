@@ -95,7 +95,7 @@ export const MistralDriver: ProviderDriver<MistralConfig> = {
       } catch {}
     };
     if (apiKey) void refreshModels();
-    const nativeAgentEngine = createNativeChatEngine({
+    const nativeAgentEngine = await createNativeChatEngine({
       providerId: "mistral", apiUrl: config.url, apiKey, catalog: () => catalog,
       toolsEnabled: config.tools !== false && String(config.tools) !== "false", imageInput: () => true,
       httpErrorLabel: "Mistral",

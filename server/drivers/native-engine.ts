@@ -7,6 +7,9 @@ import { probeLive } from "../agent-runtime/capability-probe.ts";
 import { heuristicVerifier } from "../agent-runtime/verifier.ts";
 import { createIntelligenceLayer } from "../agent-runtime/intelligence-layer.ts";
 import { defaultModelTiers } from "../agent-runtime/model-router.ts";
+import { createPluginRegistry, validateManifest, loadPlugin } from "../agent-runtime/plugin-loader.ts";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { createSqliteAgentRunStore } from "../agent-runtime/run-store.ts";
 
 /** Chat-completions drivers share one native engine shape: an OpenAI-compatible adapter over the same catalog the
@@ -27,7 +30,7 @@ export interface NativeChatEngineOptions {
   readonly modelAdapter?: ModelAdapter;
 }
 
-export function createNativeChatEngine(options: NativeChatEngineOptions): AgentEngine {
+export async function createNativeChatEngine(options: NativeChatEngineOptions): Promise<AgentEngine> {
   const adapter = options.modelAdapter ?? createOpenAICompatibleModelAdapter({
     providerId: options.providerId,
     apiUrl: options.apiUrl,
@@ -41,10 +44,31 @@ export function createNativeChatEngine(options: NativeChatEngineOptions): AgentE
       audioInput: options.audioInput,
     }),
   });
+  // Load plugins from plugins directory (if exists).
+  const pluginRegistry = createPluginRegistry();
+  const pluginsDir = join(process.cwd(), "plugins");
+  if (existsSync(pluginsDir)) {
+    for (const entry of readdirSync(pluginsDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const manifestPath = join(pluginsDir, entry.name, "plugin.json");
+      if (!existsSync(manifestPath)) continue;
+      try {
+        const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+        if (validateManifest(manifest)) {
+          const plugin = await loadPlugin(manifest, join(pluginsDir, entry.name));
+          pluginRegistry.register(plugin);
+        }
+      } catch {
+        // Skip invalid plugins.
+      }
+    }
+  }
+
   return createAgentEngine({
     adapters: { resolve: () => adapter },
     store: createSqliteAgentRunStore(),
     cacheEnabled: true,
+    plugins: pluginRegistry,
     intelligence: {
       enabled: true,
       decide: (input) => createIntelligenceLayer({ enabled: true, tiers: defaultModelTiers({ providerId: options.providerId, modelId: options.catalog().default }) }).decide(input as any),

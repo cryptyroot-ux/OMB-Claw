@@ -52,7 +52,7 @@ export const OpenAIResponsesDriver: ProviderDriver<OpenAIResponsesConfig> = {
       capabilities: (modelId) => probeCapabilities(modelId, () => MODELS, { toolsEnabled: config.tools !== false && String(config.tools) !== "false", imageInput: () => true }),
       maxOutputTokens: config.maxOutputTokens,
     });
-    const nativeAgentEngine = createNativeChatEngine({
+    const nativeAgentEngine = await createNativeChatEngine({
       providerId: DRIVER_KIND,
       apiUrl: config.url,
       apiKey,
