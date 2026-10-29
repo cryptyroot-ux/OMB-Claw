@@ -179,6 +179,7 @@ CMD ["node", "/app/dist-server/cloud-home-start.js"]
 FROM runtime AS server
 # Optional engine CLIs baked into the image (space-separated npm packages).
 ARG ENGINES=""
+RUN HOME=/tmp/omb-build-home npm install -g rea-agents --allow-scripts=frida && rm -rf /tmp/omb-build-home /tmp/node-compile-cache
 RUN if [ -n "$ENGINES" ]; then HOME=/tmp/omb-build-home npm install -g $ENGINES && rm -rf /tmp/omb-build-home /tmp/node-compile-cache; fi
 COPY --from=build --chown=maus:maus /src/dist-native/duckdb/linux-x64 ./duckdb
 COPY --from=build --chown=maus:maus /src/dist-server ./dist-server
