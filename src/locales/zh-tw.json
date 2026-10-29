@@ -4251,6 +4251,7 @@
   "rail.ownNetwork": "只能從它自己的網路連線",
   "rail.update": "目前是 {version}，{latest} 已推出",
   "rail.connectTitle": "連線 {name}",
+  "rail.connectLede": "它已經用你的帳號登入。在它上面開啟配對視窗，再把它顯示的連結貼到這裡。",
   "rail.hide": "隱藏你的電腦",
   "rail.show": "顯示你的電腦",
   "rail.showSub": "在視窗左側邊緣，為你的機器人所在的每個地方顯示一個圓圈。",

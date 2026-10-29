@@ -2419,6 +2419,7 @@
   "rail.ownNetwork": "Accessible uniquement depuis son propre réseau",
   "rail.update": "en {version}, {latest} est disponible",
   "rail.connectTitle": "Connecter {name}",
+  "rail.connectLede": "Il est déjà connecté à votre compte. Ouvrez-y une fenêtre d'appairage, puis collez ici le lien qu'il affiche.",
   "rail.hide": "Masquer vos ordinateurs",
   "rail.show": "Afficher vos ordinateurs",
   "rail.showSub": "Un cercle pour chaque endroit où vivent vos bots, sur le bord gauche de la fenêtre.",

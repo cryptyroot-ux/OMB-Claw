@@ -38,7 +38,33 @@ ipcRenderer.on("app:open-settings", (_event, section) => {
 // The full bridge goes only to the local server's UI; a remote page gets the safe subset, and main enforces the same rule.
 const localOrigin = process.argv.find((arg) => arg.startsWith("--omb-local-origin="))?.slice("--omb-local-origin=".length) ?? null;
 const isLocalPage = !localOrigin || location.origin === localOrigin;
-const REMOTE_SAFE = new Set(["platform", "app", "getCapabilities", "onCapabilitiesChanged", "applySkin", "setUnreadCount", "permStatus", "workspaces", "cloudAdd", "cloudLending", "cloudPlan", "cloudSendPage", "desktopNotices", "desktopAnalytics", "desktopLanguage", "updatesConsent", "windowControls"]);
+
+// The window's own rail of places stands at its left edge (electron/chrome-rail.mjs): main says how wide, and every page
+// beside it, whatever server it comes from, moves over by that much, at any zoom (a zoom change resizes the page). The
+// page reads how far in `--rail-beside`, which changes with the move itself.
+let railBeside = 0, railRoom = null;
+function leaveRailRoom() {
+  if (typeof document === "undefined" || !document.documentElement) return;
+  const zoom = Number(webFrame?.getZoomFactor?.()) || 1;
+  if (!railBeside) { railRoom?.remove(); railRoom = null; return; }
+  railRoom ??= document.createElement("style");
+  const room = `${Math.round((railBeside / zoom) * 100) / 100}px`;
+  railRoom.textContent = `html { box-sizing: border-box !important; padding-left: ${room} !important; --rail-beside: ${room}; }`;
+  if (!railRoom.isConnected) (document.head ?? document.documentElement).append(railRoom);
+}
+const railState = (state) => ({ available: state?.available === true, hidden: state?.hidden === true });
+ipcRenderer.on("rail:beside", (_event, width) => { railBeside = Math.max(0, Math.min(200, Number(width) || 0)); leaveRailRoom(); });
+// The rail's own page keeps its size whatever the zoom of this app's page: Chromium gives every page of a host the same
+// zoom, the rail's included, so the rail takes it back out and stays as wide as its strip.
+function railKeepsItsSize() {
+  if (!isLocalPage || location.pathname !== "/rail" || typeof document === "undefined" || !document.documentElement) return;
+  const zoom = Number(webFrame?.getZoomFactor?.()) || 1;
+  document.documentElement.style.zoom = zoom === 1 ? "" : String(Math.round((1 / zoom) * 10000) / 10000);
+}
+if (typeof window !== "undefined") {
+  for (const type of ["resize", "DOMContentLoaded"]) window.addEventListener(type, () => { leaveRailRoom(); railKeepsItsSize(); });
+}
+const REMOTE_SAFE = new Set(["platform", "app", "getCapabilities", "onCapabilitiesChanged", "applySkin", "setUnreadCount", "permStatus", "workspaces", "rail", "cloudAdd", "cloudPlan", "cloudSendPage", "desktopNotices", "desktopAnalytics", "desktopLanguage", "updatesConsent", "windowControls"]);
 /** My Cloud's own page once it is the person's home (main checks the sender again): it is this app's page then. */
 const HOME_PAGE = ["home", "onChatLink", "onPackageInstall", "onOpenAppSettings", "exportDiagnostics", "openLogsFolder", "openAtLogin"];
 function updaterOffered() {
@@ -121,6 +147,27 @@ const bridge = {
       ipcRenderer.on("workspaces:changed", handler);
       return () => ipcRenderer.removeListener("workspaces:changed", handler);
     },
+  },
+  // The window's own rail (this app's page at /rail, beside every place's page): while a sheet of its own is open it
+  // covers the window; the skin of the page beside it comes from main. The page beside it, from whichever server,
+  // offers the button that hides and shows it, and learns only whether there is one to hide, never its places.
+  rail: {
+    state: () => ipcRenderer.invoke("rail:offer").then(railState),
+    setHidden: (hidden) => isLocalPage || navigator.userActivation?.isActive === true
+      ? ipcRenderer.invoke("rail:hide", hidden === true).then(railState) : Promise.reject(new Error("Choose to hide or show your computers.")),
+    onState: (cb) => {
+      const handler = (_event, state) => cb(railState(state));
+      ipcRenderer.on("rail:state", handler);
+      return () => ipcRenderer.removeListener("rail:state", handler);
+    },
+    ...(isLocalPage ? {
+      expand: (on) => ipcRenderer.invoke("rail:expand", on === true),
+      onSkin: (cb) => {
+        const handler = (_event, skin) => cb(String(skin));
+        ipcRenderer.on("rail:skin", handler);
+        return () => ipcRenderer.removeListener("rail:skin", handler);
+      },
+    } : {}),
   },
   // Buying another Cloud from the rail's ＋, on this app's page or a hosted Cloud's: plain words in, what the sheet says
   // out; the account, the token and the checkout page stay in main. Only from the person's click where it opens anything.

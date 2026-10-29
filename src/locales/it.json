@@ -272,6 +272,7 @@
   "rail.ownNetwork": "Raggiungibile solo dalla sua rete",
   "rail.update": "su {version}, è uscita la {latest}",
   "rail.connectTitle": "Collega {name}",
+  "rail.connectLede": "Ha già effettuato l'accesso con il tuo account. Aprici una finestra di abbinamento, poi incolla qui il link che mostra.",
   "rail.hide": "Nascondi i tuoi computer",
   "rail.show": "Mostra i tuoi computer",
   "rail.showSub": "Un cerchio per ogni posto in cui vivono i tuoi bot, sul bordo sinistro della finestra.",

@@ -325,6 +325,7 @@
   "rail.ownNetwork": "Only reachable on its own network",
   "rail.update": "on {version}, {latest} is out",
   "rail.connectTitle": "Connect {name}",
+  "rail.connectLede": "It's signed in to your account already. Open a pairing window on it, then paste the link it prints here.",
   "rail.hide": "Hide your computers",
   "rail.show": "Show your computers",
   "rail.showSub": "A circle for each place your bots live, at the window's left edge.",

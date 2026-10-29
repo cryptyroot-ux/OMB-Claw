@@ -4860,6 +4860,7 @@
   "rail.ownNetwork": "Chỉ truy cập được từ mạng riêng của nó",
   "rail.update": "đang ở {version}, đã có {latest}",
   "rail.connectTitle": "Kết nối {name}",
+  "rail.connectLede": "Nó đã đăng nhập bằng tài khoản của bạn. Hãy mở cửa sổ ghép nối trên đó, rồi dán liên kết nó in ra vào đây.",
   "rail.hide": "Ẩn các máy tính của bạn",
   "rail.show": "Hiện các máy tính của bạn",
   "rail.showSub": "Một vòng tròn cho mỗi nơi các bot của bạn sống, ở mép trái cửa sổ.",

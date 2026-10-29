@@ -43,6 +43,18 @@ export interface DesktopPrefs {
   updatesConsent(): import("./updates-consent.mjs").UpdatesConsentRecord | null;
   /** False, and nothing saved, for a record updates-consent.mjs would not read back. */
   setUpdatesConsent(value: unknown): boolean;
+  /** True until switched off. */
+  talkShortcut(): boolean;
+  setTalkShortcut(enabled: boolean): void;
+  talkKey(): import("./talk-shortcut.mjs").TalkKeyId;
+  /** False, and nothing saved, for anything but a key id in talk-keys.mjs. */
+  setTalkKey(id: unknown): boolean;
+  /** The Quick asks chat made on this server (keyed by its data folder), null until one is saved. */
+  quickAsksChat(server: string): { botId: string; threadId: string } | null;
+  setQuickAsksChat(server: string, chat: { botId: string; threadId: string }): void;
+  /** False until the person hides the window's rail of places. */
+  railHidden(): boolean;
+  setRailHidden(hidden: boolean): void;
 }
 type Files = Pick<typeof import("node:fs"), "readFileSync" | "writeFileSync" | "renameSync" | "rmSync">;
 export declare function jsonFile(file: string, files?: Files): { read(): unknown; write(value: unknown): void };

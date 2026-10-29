@@ -140,7 +140,10 @@ test("the rail's channels: the list only for a page main vouches for, a circle o
   assert.deepEqual([r.opened, r.ran], [["a"], [["link"], ["link", "https://bots.example.test/#pair=abc"], ["link"], ["link", "x".repeat(4096)]]],
     "a pasted link reaches main's own Connect dialog trimmed and bounded; anything but text is the clipboard's");
   r.installed.changed(); r.installed.changed();
-  assert.deepEqual(r.sent, ["workspaces:changed"], "a signal only, and once per change");
+  assert.deepEqual(r.sent, ["page:workspaces:changed", "rail:workspaces:changed"], "a signal only, to the page and the rail, and once per change");
+  r.w.beside = true;
+  r.installed.changed();
+  assert.deepEqual(r.sent.slice(2), ["page:workspaces:changed", "rail:workspaces:changed"], "the rail came beside the page (or went): the page reads it again");
 });
 
 test("buying another Cloud from a page: the plan must be on sale, the name is checked, and the page gets only what the sheet says", async () => {

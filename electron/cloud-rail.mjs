@@ -179,9 +179,10 @@ export function installCloudRail({ ipcMain, guard, trusted, places, open, add, a
   });
   return {
     sheetOpen: () => sheetOpen,
-    /** The places or the sign-in changed: the page that shows the rail reads it again (a signal only, never the list). */
+    /** The places, the sign-in or the rail beside the page changed: the rail's page and the page beside it read them
+     * again (a signal only, never the list). */
     changed() {
-      const key = JSON.stringify([places(), add.choices(), account()?.state().adding ?? null, account()?.state().addCloud ?? null]);
+      const key = JSON.stringify([places(), choices(), account()?.state().adding ?? null, account()?.state().addCloud ?? null, beside()]);
       if (key === sent) return;
       sent = key;
       const win = window();
