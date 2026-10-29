@@ -40,7 +40,7 @@ const { CalendarGrid } = await import("./RoutineCalendarPage");
 const NOW = new Date(2026, 9, 19, 10, 0, 0).getTime();
 const RESET = new Date(2026, 9, 19, 15, 40, 0).getTime();
 const HOUR = 3_600_000;
-const claude = (used: number, blocked = false): EngineLimit => ({ engine: "claude", name: "Claude", driver: "claude", window: "5-hour", usedPercent: used, resetsAt: RESET, blocked });
+const claude = (used: number, blocked = false): EngineLimit => ({ engine: "grok", name: "Grok", driver: "grok", window: "5-hour", usedPercent: used, resetsAt: RESET, blocked });
 const bot = { id: "scout", name: "Scout", hidden: false, threadId: "t-main", modelSelection: { instanceId: "claude", model: "claude-sonnet-5" }, tasks: [] } as unknown as Bot;
 const routine = (id: string, nextRunAt: number, extra: Partial<Routine> = {}): Routine => ({
   id, name: id, prompt: "Finish the report.", target: "bot", botId: "scout", runOn: "maus", enabled: true,

@@ -23,17 +23,6 @@ export function deviceSignInProvider(_driverKind: string): DeviceSignInProvider 
 }
 
 export const DEVICE_SIGN_IN_COPY: Record<DeviceSignInProvider, Record<"description" | "start" | "enterCode" | "open" | "security" | "connected" | "connectedAccount" | "failed" | "invalidChallenge", LocaleKey>> = {
-  codex: {
-    description: "engineSetup.device.description",
-    start: "engineSetup.device.start",
-    enterCode: "engineSetup.device.enterCode",
-    open: "engineSetup.device.openChatGPT",
-    security: "engineSetup.device.security",
-    connected: "engineSetup.device.connected",
-    connectedAccount: "engineSetup.device.connectedAccount",
-    failed: "engineSetup.device.failed",
-    invalidChallenge: "engineSetup.device.invalidChallenge",
-  },
   grok: {
     description: "engineSetup.grok.description",
     start: "engineSetup.grok.start",

@@ -34,9 +34,9 @@ export async function launchRestartableServer(options: { scripted?: boolean; dat
   mkdirSync(join(dataDir, "tmp"), { recursive: true });
   const planPath = join(dataDir, "room-plan.json");
   if (options.scripted) writeFileSync(planPath, "{}");
-  writeFileSync(join(dataDir, "config.json"), JSON.stringify({ language: "en", instances: { claude: {
-    driver: "claudeAgent", displayName: "Verification fixture", config: { cli: join(ROOT, "server", "testing", "fake-claude-cli.ts") },
-    ...(options.scripted ? { environment: { FAKE_CLAUDE_ROOM_PLAN: planPath } } : {}),
+  writeFileSync(join(dataDir, "config.json"), JSON.stringify({ language: "en", instances: { grok: {
+    driver: "grok", displayName: "Verification fixture",
+    ...(options.scripted ? { environment: { FAKE_GROK_ROOM_PLAN: planPath } } : {}),
   } } }, null, 2));
   // Kept after close, for a failed run's evidence.
   const evidenceDir = join(tmpdir(), "openmausbot-verification-evidence");

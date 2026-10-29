@@ -14,7 +14,6 @@ import { holdsCredential } from "../shared/redact.ts";
 import { parseSkillMd, scanSkillText, SKILL_FILE_MAX_BYTES, type ParsedSkill } from "../shared/skill-md.ts";
 import { importedSkillIntact, readImportedSkills, storeImportedSkills, type ImportedSkillEntry, type ImportedSkillInput } from "./imported-skills.ts";
 import { importedMcpServerName, isRemoteMcpServer, MAX_MCP_SERVERS, parseMcpServersImport, parseStoredMcpServer, type StoredMcpServer } from "./mcp-registry.ts";
-import { parseToml } from "./toml-lite.ts";
 
 /** The file operations finding and copying use, so tests can see every path touched. Each answers null on failure. */
 export interface SetupFs {
@@ -90,7 +89,7 @@ export function thisMachine(): SetupMachine {
   return { home: homedir(), platform: process.platform, env: process.env, fs: nodeFs };
 }
 
-type ToolFormat = "claudeJson" | "json" | "toml";
+type ToolFormat = "claudeJson" | "json";
 
 const CONFIG_MAX_BYTES = 1024 * 1024;
 /** ~/.claude.json also keeps every project's history, so it can be large; only its mcpServers member is parsed. */
@@ -100,22 +99,17 @@ const CLAUDE_JSON_MAX_BYTES = 256 * 1024 * 1024;
 export function setupPaths(machine: Pick<SetupMachine, "home" | "platform" | "env">) {
   const { home, platform, env } = machine;
   const absolute = (value: string | undefined) => (value && isAbsolute(value) ? value : null);
-  const codexHome = absolute(env.CODEX_HOME) ?? join(home, ".codex");
   const desktop = platform === "darwin" ? join(home, "Library", "Application Support", "Claude")
     : platform === "win32" ? join(absolute(env.APPDATA) ?? join(home, "AppData", "Roaming"), "Claude")
       : join(home, ".config", "Claude");
-  const codexLabel = codexHome === join(home, ".codex") ? "~/.codex/skills" : "$CODEX_HOME/skills";
   return {
-    codexHome,
     skills: [
       { source: "claudeCode", root: join(home, ".claude", "skills"), label: "~/.claude/skills" },
-      { source: "codex", root: join(codexHome, "skills"), label: codexLabel },
     ] satisfies Array<{ source: SkillSource; root: string; label: string }>,
     tools: [
       { source: "claudeCode", path: join(home, ".claude.json"), format: "claudeJson", max: CLAUDE_JSON_MAX_BYTES },
       { source: "claudeDesktop", path: join(desktop, "claude_desktop_config.json"), format: "json", max: CONFIG_MAX_BYTES },
       { source: "cursor", path: join(home, ".cursor", "mcp.json"), format: "json", max: CONFIG_MAX_BYTES },
-      { source: "codex", path: join(codexHome, "config.toml"), format: "toml", max: CONFIG_MAX_BYTES },
       { source: "gemini", path: join(home, ".gemini", "settings.json"), format: "json", max: CONFIG_MAX_BYTES },
     ] satisfies Array<{ source: SetupSource; path: string; format: ToolFormat; max: number }>,
   };
@@ -214,7 +208,7 @@ function placesFor(machine: SetupMachine): Places {
     return [...new Set([...spellings, ...(found ? [found.path] : [])])];
   };
   const paths = setupPaths(machine);
-  const toolHomes = [join(machine.home, ".claude"), paths.codexHome, join(machine.home, ".gemini"), join(machine.home, ".cursor")].flatMap(forms);
+  const toolHomes = [join(machine.home, ".claude"), join(machine.home, ".gemini"), join(machine.home, ".cursor")].flatMap(forms);
   const roots = new Map<string, string>();
   for (const { root } of paths.skills) {
     const found = locate(machine, { homes, darwin }, root);
@@ -573,7 +567,7 @@ function textValues(value: unknown): Record<string, string> | undefined {
 /** Each tool's entry in the {"mcpServers": …} shape Paste config takes. Token variables are not resolved: the person
  * adds the token as a header when they test the server. */
 function pasteEntry(source: SetupSource, raw: Record<string, unknown>): Record<string, unknown> {
-  const headers = textValues(source === "codex" ? raw.http_headers : raw.headers);
+  const headers = textValues(raw.headers);
   const remote = (type: "http" | "sse", url: unknown) => ({ type, url, ...(headers ? { headers } : {}) });
   if (source === "gemini") {
     if (typeof raw.httpUrl === "string") return remote("http", raw.httpUrl);
@@ -608,8 +602,8 @@ function toolEntries(machine: SetupMachine, tool: ReturnType<typeof setupPaths>[
       const servers = topLevelJsonMember(text, "mcpServers");
       return isRecord(servers) ? servers : null;
     }
-    const parsed: unknown = tool.format === "toml" ? parseToml(text) : JSON.parse(withoutTrailingCommas(withoutJsonComments(text)));
-    const servers = isRecord(parsed) ? parsed[tool.format === "toml" ? "mcp_servers" : "mcpServers"] : undefined;
+    const parsed: unknown = JSON.parse(withoutTrailingCommas(withoutJsonComments(text)));
+    const servers = isRecord(parsed) ? parsed["mcpServers"] : undefined;
     return isRecord(servers) ? servers : null;
   } catch {
     return null;

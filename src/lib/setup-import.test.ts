@@ -6,7 +6,7 @@ import type { SetupDetection } from "../../shared/setup-import";
 import { detectSetupWithin, importOutcome, localSetupImport, skillsSummary, toolsSummary, type SetupImportClient } from "./setup-import";
 
 const FOUND: SetupDetection = {
-  skills: [{ name: "pdf", source: "claudeCode" }, { name: "review", source: "codex" }],
+  skills: [{ name: "pdf", source: "claudeCode" }],
   tools: [{ name: "notion", source: "cursor" }],
 };
 

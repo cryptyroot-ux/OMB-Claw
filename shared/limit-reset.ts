@@ -6,7 +6,7 @@ export type LimitResetRepeat = "once" | "every_reset";
 /** A routine schedule that runs when an engine's usage limit resets. */
 export interface LimitResetSchedule {
   type: "limit_reset";
-  /** The engine instance id whose limit it waits for, e.g. "claude" or "codex". */
+  /** The engine instance id whose limit it waits for, e.g. "grok" or "openai". */
   engine: string;
   repeat: LimitResetRepeat;
   /** Derived by the server, never taken from input: the reset plus a short buffer, or null while the time is not known. */
@@ -30,7 +30,7 @@ export interface EngineLimit {
   engine: string;
   /** The engine's display name ("Claude", "Codex", or the instance's own name). */
   name: string;
-  driver: "claude" | "codex" | "grok";
+  driver: "grok";
   /** The window that decides the reset: the fullest, or the one refusing work. */
   window: LimitWindowName | null;
   /** 0–100, or null when the engine reported no window. */

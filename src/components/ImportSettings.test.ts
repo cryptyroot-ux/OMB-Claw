@@ -12,7 +12,7 @@ import { AiAppsImportView, ImportSettings, type AiAppsImportViewProps } from "./
 
 const text = (markup: string) => markup.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/&amp;/g, "&").replace(/\s+/g, " ");
 const FOUND: SetupDetection = {
-  skills: [{ name: "pdf", source: "claudeCode" }, { name: "review", source: "codex" }],
+  skills: [{ name: "pdf", source: "claudeCode" }],
   tools: [{ name: "notion", source: "cursor" }],
 };
 const apps = (overrides: Partial<AiAppsImportViewProps> = {}) => text(renderToStaticMarkup(createElement(AiAppsImportView, {

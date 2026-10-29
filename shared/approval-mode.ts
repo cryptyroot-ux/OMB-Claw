@@ -16,8 +16,8 @@ export type ApprovalMode = (typeof APPROVAL_MODES)[number];
  * chat-completions family, ACP agents such as Kimi or Hermes, Pi's computer
  * confirms). */
 export function supportsApprovalMode(driverKind: string | undefined, mode: ApprovalMode): boolean {
-  if (mode === "custom") return driverKind === "codex";
-  if (mode === "edits") return ["claudeAgent", "grokAgent", "antigravityAgent", "qwenAgent", "geminiAgent"].includes(driverKind ?? "");
+  if (mode === "custom") return false;
+  if (mode === "edits") return ["grokAgent"].includes(driverKind ?? "");
   return true;
 }
 
@@ -37,7 +37,7 @@ export function modelSwitchNeedsAsk(
 export function hasNativeAutoReview(driverKind: string | undefined): boolean {
   // Qwen Code's `--approval-mode auto` is an LLM classifier that approves
   // safe actions and blocks risky ones — a reviewer, not a rubber stamp.
-  return ["codex", "claudeAgent", "cursorAgent", "grokAgent", "qwenAgent"].includes(driverKind ?? "");
+  return ["grokAgent"].includes(driverKind ?? "");
 }
 
 const APPROVAL_RANK: Record<ApprovalMode, number> = { ask: 0, edits: 1, auto: 2, full: 3, custom: 4 };

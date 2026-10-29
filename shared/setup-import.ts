@@ -1,8 +1,8 @@
 // "Bring what you already use": the skills and MCP servers of a person's other AI tools that the welcome flow finds
 // on this computer and brings in.
 
-export type SetupSource = "claudeCode" | "claudeDesktop" | "cursor" | "codex" | "gemini";
-export type SkillSource = Extract<SetupSource, "claudeCode" | "codex">;
+export type SetupSource = "claudeCode" | "claudeDesktop" | "cursor" | "gemini";
+export type SkillSource = Extract<SetupSource, "claudeCode">;
 
 /** Names only, never a file's contents or an env or header value. Everything listed is new here. */
 export interface SetupDetection {

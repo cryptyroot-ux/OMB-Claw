@@ -199,7 +199,7 @@ function normalizeScheduleInput(args: Json): NormalizedSchedule {
 
 /** No engine means the bot's own, which the harness knows. */
 function limitResetSchedule(engine: unknown, repeat: unknown): NormalizedSchedule {
-  if (engine != null && (typeof engine !== "string" || !engine.trim())) return { error: 'engine must be an engine id such as "claude" or "codex"; omit it for your own engine.' };
+  if (engine != null && (typeof engine !== "string" || !engine.trim())) return { error: 'engine must be an engine id such as "grok" or "openai-compat"; omit it for your own engine.' };
   if (repeat != null && repeat !== "once" && repeat !== "every_reset") return { error: 'repeat must be "once" or "every_reset".' };
   return { schedule: { type: "limit_reset", ...(typeof engine === "string" ? { engine: engine.trim() } : {}), repeat: repeat === "every_reset" ? "every_reset" : "once" } };
 }

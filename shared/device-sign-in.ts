@@ -1,19 +1,12 @@
 // Where a person enters the one-time code that signs an engine's CLI in on
-// the machine running OpenMausBot (`codex login --device-auth`, `grok login
-// --device-auth`). The server reads the page and the code from the CLI's
-// output with these rules, and the app checks them again before it shows a
-// link. Neither ever turns arbitrary output into a link, or lets a token ride
-// along in one.
+// the machine running OpenMausBot (`grok login --device-auth`). The server reads
+// the page and the code from the CLI's output with these rules, and the app
+// checks them again before it shows a link. Neither ever turns arbitrary output
+// into a link, or lets a token ride along in one.
 
-export type DeviceSignInProvider = "codex" | "grok";
-
-const CODEX_PAGE = "https://auth.openai.com/codex/device";
+export type DeviceSignInProvider = "grok";
 
 const RULES: Record<DeviceSignInProvider, { page(value: string): string | null; code: RegExp }> = {
-  codex: {
-    page: (value) => (/^https:\/\/auth\.openai\.com\/codex\/device\/?$/.test(value) ? CODEX_PAGE : null),
-    code: /^[A-Z0-9]{4,8}-[A-Z0-9]{4,8}$/,
-  },
   grok: {
     // xAI's own sign-in hosts. The page may carry the code itself (the
     // provider's "complete" link); nothing else may ride in its query.

@@ -254,7 +254,7 @@ const botFieldsSchema = z.object({
 }).strict();
 const skillFileSchema = z.object({ path: z.string().max(400).refine(validRelative), content: z.string().max(512 * 1024), executable: z.boolean() });
 const importedSkillSchema = z.object({ name: z.string().refine(isSkillName), skillMd: z.string().max(512 * 1024), files: z.array(skillFileSchema).max(200),
-  entry: z.object({ description: z.string().max(4000), source: z.enum(["claudeCode", "codex"]), root: z.string().max(4096), origin: z.string().max(4096),
+  entry: z.object({ description: z.string().max(4000), source: z.enum(["claudeCode"]), root: z.string().max(4096), origin: z.string().max(4096),
     label: z.string().max(400), sha256: z.string().regex(/^[a-f0-9]{64}$/u), warnings: z.array(z.string().max(2000)).max(100),
     license: z.string().max(400).optional(), compatibility: z.string().max(400).optional() }) });
 const librarySkillSchema = z.object({ text: z.string().max(512 * 1024), entry: z.object({ name: z.string().refine(isSkillName), description: z.string().max(4000),
