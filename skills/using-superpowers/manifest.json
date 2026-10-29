@@ -1,0 +1,10 @@
+{
+  "id": "using-superpowers",
+  "name": "Using Superpowers",
+  "version": "1.0.0",
+  "description": "Always-active skill that enforces superpowers discipline: check for applicable skills before any response, invoke relevant skills proactively.",
+  "defaultEnabled": true,
+  "alwaysActive": true,
+  "triggerTerms": ["the", "a", "is", "to", "and", "of", "in", "for", "on", "with"],
+  "requiredCapabilities": []
+}

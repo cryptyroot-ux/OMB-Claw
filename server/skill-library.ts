@@ -20,6 +20,7 @@ export interface SkillManifest {
   version: string;
   description: string;
   defaultEnabled: boolean;
+  alwaysActive?: boolean;
   triggerTerms: string[];
   requiredCapabilities: string[];
 }
@@ -57,6 +58,7 @@ export function parseSkillManifest(value: unknown, directory: string): SkillMani
     version: raw.version,
     description: raw.description.trim(),
     defaultEnabled: raw.defaultEnabled,
+    alwaysActive: raw.alwaysActive === true,
     triggerTerms,
     requiredCapabilities,
   };
@@ -120,7 +122,7 @@ export function selectBundledSkills(
   return skills.filter(({ manifest }) =>
     manifest.defaultEnabled &&
     manifest.requiredCapabilities.every((capability) => available.has(capability)) &&
-    manifest.triggerTerms.some((term) => haystack.includes(term.toLowerCase())),
+    (manifest.alwaysActive === true || manifest.triggerTerms.some((term) => haystack.includes(term.toLowerCase()))),
   );
 }
 

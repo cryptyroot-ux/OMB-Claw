@@ -90,9 +90,10 @@ describe("bundled verification skill", () => {
       "/create-verification-skill for my notes app",
       "can you make a verification skill so you can prove changes work",
     ]) {
-      expect(selectBundledSkills(text, [], skills)).toEqual([]);
+      expect(selectBundledSkills(text, [], skills).map((skill) => skill.manifest.id))
+        .toContain("using-superpowers");
       expect(selectBundledSkills(text, ["skillAuthoring"], skills).map((skill) => skill.manifest.id))
-        .toEqual(["create-verification-skill"]);
+        .toContain("create-verification-skill");
     }
   });
 
@@ -104,7 +105,9 @@ describe("bundled verification skill", () => {
       "make a control cli",
       "create a feature map for my app",
     ]) {
-      expect(selectBundledSkills(text, ["skillAuthoring"], skills)).toEqual([]);
+      const ids = selectBundledSkills(text, ["skillAuthoring"], skills).map((skill) => skill.manifest.id);
+      // using-superpowers is alwaysActive, so it may be included
+      expect(ids).not.toContain("create-verification-skill");
     }
   });
 });
