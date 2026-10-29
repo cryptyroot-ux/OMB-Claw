@@ -13194,7 +13194,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       const scopes = Array.isArray(requested) ? requested.filter((v): v is Scope => v === "admin" || v === "client") : undefined;
       let opened: ReturnType<typeof sessions.openPairing>;
       try {
-        opened = sessions.openPairing({ label: typeof body?.label === "string" ? body.label : undefined, scopes });
+        opened = sessions.openPairing({ label: typeof body?.label === "string" ? body.label : undefined, scopes, browser: body?.browser === true, ttlMs: typeof body?.ttlMs === "number" ? body.ttlMs : undefined });
       } catch (error) {
         if ((error as { code?: unknown }).code === "cloud_personal") return json(res, 403, { error: (error as Error).message, code: "cloud_personal" });
         throw error;
