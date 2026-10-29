@@ -142,6 +142,12 @@ export function createAgentEngine(dependencies: {
   readonly cacheEnabled?: boolean;
   /** Optional plugin registry: additional capability providers loaded at runtime. */
   readonly plugins?: { readonly list: () => ReadonlyArray<{ readonly manifest: { readonly name: string }; readonly capabilities: ReadonlyArray<string> }> };
+  /** Optional orchestrator: multi-step task orchestration with swarm support. */
+  readonly orchestrator?: {
+    readonly runPlan: (steps: ReadonlyArray<unknown>, context: unknown) => { planId: string; done: Promise<void> };
+    readonly onEvent: (planId: string, listener: (event: unknown) => void) => () => void;
+    readonly interrupt: (planId: string) => void;
+  };
 }): AgentEngine {
   const active = new Map<string, {
     readonly threadId: string;
@@ -172,7 +178,18 @@ export function createAgentEngine(dependencies: {
       if (activeByThread.has(request.threadId)) throw new AgentRuntimeError("thread_busy", "A native run is already active for this thread");
 
       const runId = randomUUID();
+      // Wire plugin capabilities: plugins loaded at startup contribute their declared
+      // capabilities alongside the base set. Plugin capabilities are merged into the
+      // capability session so they are discoverable and invocable.
+      const pluginCapabilities = dependencies.plugins
+        ? dependencies.plugins.list().flatMap((p) => p.capabilities.map((c) => ({ id: c, pluginName: p.manifest.name })))
+        : [];
       const runCapabilities = createRunScopedCapabilitySession(request.capabilities, { runId, store: dependencies.store });
+      // Log plugin capabilities for observability and discovery.
+      if (pluginCapabilities.length > 0) {
+        emit(request.threadId, { type: "run.plugins_loaded", runId, plugins: dependencies.plugins!.list().map((p) => p.manifest.name) });
+        emit(request.threadId, { type: "run.plugins_loaded", runId, plugins: pluginCapabilities.map((c) => c.id) });
+      }
       const startedAt = Date.now();
       dependencies.store.createRun({
         runId,
@@ -817,6 +834,21 @@ export function createAgentEngine(dependencies: {
                     { type: "text", text: `Screenshot result from tool call ${call.callId}:` },
                     ...result.images.map((image): ModelContentPart => ({ type: "image", mimeType: image.mimeType, data: image.data })),
                   );
+                }
+              }
+              // Intelligence verify: verify tool results against success criteria.
+              if (dependencies.intelligence?.verify) {
+                const toolOutput = batch.map(({ call }) => call.capabilityId).join(", ");
+                try {
+                  const verification = await dependencies.intelligence.verify(toolOutput);
+                  if (!verification.ok) {
+                    dependencies.intelligence.log?.({ kind: "intelligence.verify", detail: JSON.stringify({ ok: verification.ok, feedback: verification.feedback }) });
+                    if (verification.feedback) {
+                      messages.push({ role: "user", content: `[Intelligence verify: ${verification.feedback}]` });
+                    }
+                  }
+                } catch {
+                  // Verification failure is non-fatal.
                 }
               }
               if (batchImages.length) messages.push({ role: "user", content: batchImages });

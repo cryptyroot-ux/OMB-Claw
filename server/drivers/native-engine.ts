@@ -12,6 +12,8 @@ import { isIntelligenceEnabled } from "../intelligence/feature-flag.ts";
 import { BudgetGuard } from "../routing/budget-guard.ts";
 import { defaultModelTiers } from "../agent-runtime/model-router.ts";
 import { createPluginRegistry, validateManifest, loadPlugin } from "../agent-runtime/plugin-loader.ts";
+import { createOrchestrator } from "../agent-runtime/orchestrator.ts";
+import { createOrchestratorStore } from "../agent-runtime/orchestrator-store.ts";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createSqliteAgentRunStore } from "../agent-runtime/run-store.ts";
@@ -109,7 +111,7 @@ export async function createNativeChatEngine(options: NativeChatEngineOptions): 
     },
   };
 
-  return createAgentEngine({
+  const engine = createAgentEngine({
     adapters: { resolve: (ref: ProviderModelRef) => getAdapterForModel(ref.modelId) },
     store: createSqliteAgentRunStore(),
     cacheEnabled: true,
@@ -181,4 +183,40 @@ export async function createNativeChatEngine(options: NativeChatEngineOptions): 
         }
       : {}),
   });
+
+  // Create orchestrator for multi-step task orchestration with swarm support.
+  // The orchestrator wraps the engine and uses intelligence for plan/execute/verify.
+  const orchestratorStore = createOrchestratorStore();
+  const orchestrator = createOrchestrator({
+    engine,
+    store: orchestratorStore,
+    intelligence: {
+      enabled: isIntelligenceEnabled(undefined, process.env),
+      decide: (input: any) => createIntelligenceLayer({ enabled: isIntelligenceEnabled(undefined, process.env), tiers: defaultModelTiers({ providerId: options.providerId, modelId: options.catalog().default }) }).decide(input as any),
+      verify: async (output: any, step?: any) => {
+        try {
+          const modelCaller = createModelCaller(baseAdapter, options.catalog().default);
+          const v = new Verifier(modelCaller);
+          const ps = {
+            id: step?.id ?? "step",
+            description: (step && typeof step.description === "string") ? step.description : (step && typeof step.text === "string") ? step.text : String(output ?? ""),
+            type: "think",
+            expectedTools: [],
+            dependencies: [],
+            successCriteria: (step && typeof step.successCriteria === "string") ? step.successCriteria : ((step && typeof step.text === "string") ? step.text : String(output ?? "")),
+            result: output,
+          } as any;
+          const vr = await v.verify(ps, "");
+          return { ok: vr.verified, feedback: vr.reworkSuggestions?.join("; ") || vr.evidence || "" };
+        } catch {
+          return heuristicVerifier(typeof output === "string" ? output : String(output));
+        }
+      },
+    },
+    swarm: { enabled: true },
+  });
+
+  // Attach orchestrator to engine for external access.
+  (engine as any).orchestrator = orchestrator;
+  return engine;
 }
