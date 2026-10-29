@@ -39,7 +39,7 @@ export interface KeyTarget {
 }
 
 export type KeyId =
-  | "openai" | "anthropic" | "xai" | "openrouter" | "mistral" | "cerebras" | "groq" | "meta" | "deepseek" | "opencodeGo" | "opencodeProviders"
+  | "openai" | "anthropic" | "xai" | "openrouter" | "mistral" | "cerebras" | "groq" | "meta" | "deepseek" | "opencodeProviders"
   | "lmStudio" | "openaiCompat" | "liveCalls" | "liveKey" | "elevenlabs" | "fishAudio" | "box" | "vps" | "onePassword" | "composio" | "treg"
   | "jev" | "openrouterHelper" | "workersAi" | "imageOpenai" | "imageCustom";
 
@@ -80,7 +80,7 @@ export const KEY_CATALOG: readonly KeyEntry[] = [
     words: ["openai", "chatgpt", "gpt", "live calls"], mark: provider("openai-compat", "openai"), kind: "key",
     target: providerKey("openai", { placeholder: "sk-…", href: "https://platform.openai.com/api-keys", test: "openai", analytics: "openai", shape: OPENAI_SHAPE, noteKey: "keys.openai.note" }) },
   { id: "anthropic", section: "ai", labelKey: "keys.anthropic.label", purposeKey: "keys.purpose.anthropic", name: "Anthropic", env: ["OMB_ANTHROPIC_API_KEY"],
-    words: ["anthropic", "claude"], mark: provider("claudeAgent", "anthropic"), kind: "key",
+    words: ["anthropic", "claude"], mark: provider("anthropic", "anthropic"), kind: "key",
     target: { patch: (value, firstKey) => ({ anthropic: { key: value, ...(firstKey && value ? { everyClaudeBot: false } : {}) } }), saved: (config) => flag(config.anthropic),
       placeholder: "sk-ant-…", href: "https://console.anthropic.com/settings/keys", test: "anthropic", analytics: "anthropic", shape: /^sk-ant-/ } },
   { id: "xai", section: "ai", labelKey: "keys.xai.label", purposeKey: "keys.purpose.xai", name: "xAI", env: ["XAI_API_KEY"],
@@ -102,15 +102,9 @@ export const KEY_CATALOG: readonly KeyEntry[] = [
     words: ["meta", "muse", "llama"], mark: provider("meta", "meta"), kind: "key",
     target: providerKey("meta", { placeholder: "LLM|…", href: "https://dev.meta.ai/docs/authentication", test: "meta", analytics: "meta", shape: /^LLM\|/ }) },
   { id: "deepseek", section: "ai", labelKey: "keys.deepseek.label", purposeKey: "keys.purpose.deepseek", name: "DeepSeek", env: ["OMB_DEEPSEEK_API_KEY"],
-    words: ["deepseek", "dsh", "harness"], mark: provider("deepseekAgent", "deepseek"), kind: "key",
+    words: ["deepseek", "dsh", "harness"], mark: provider("deepseek", "deepseek"), kind: "key",
     target: providerKey("deepseek", { placeholder: "sk-…", href: "https://platform.deepseek.com/api_keys", analytics: "deepseek" }) },
-  { id: "opencodeGo", section: "ai", labelKey: "keys.opencode.label", purposeKey: "keys.purpose.opencodeGo", name: "OpenCode", env: ["OPENCODE_API_KEY"],
-    words: ["opencode", "zen", "go"], mark: provider("opencodeGo"), kind: "key",
-    target: { patch: (value) => ({ opencodeGo: { apiKey: value } }), slot: "opencodeGoApiKey", saved: (config) => flag(config.opencodeGo),
-      placeholder: "…", placeholderKey: "keys.opencode.placeholder", href: "https://opencode.ai/docs/providers/", analytics: "opencode_go" } },
-  { id: "opencodeProviders", section: "ai", labelKey: "keys.opencode.otherProviders.title", purposeKey: "keys.purpose.opencodeProviders", name: "OpenCode", env: [],
-    words: ["opencode", "venice", "providers", "provider keys"], mark: provider("opencodeGo"), kind: "panel",
-    status: (config) => ({ configured: (config.opencodeGo?.providerKeys?.length ?? 0) > 0 }) },
+
   { id: "lmStudio", section: "servers", labelKey: "lmStudio.title", purposeKey: "keys.purpose.lmStudio", name: "LM Studio", env: [],
     words: ["lm studio", "lmstudio", "llm studio", "local", "bionic"], mark: { icon: Server }, kind: "panel" },
   { id: "openaiCompat", section: "servers", labelKey: "keys.openaiCompat.label", purposeKey: "keys.purpose.openaiCompat", name: "OpenAI-compatible", env: ["OPENAI_COMPAT_API_KEY", "OPENAI_COMPAT_URL"],
@@ -211,7 +205,7 @@ export function looksLikeOtherKey(entry: KeyEntry, value: string): KeyEntry | nu
 
 const INSTANCE_KEYS: Readonly<Record<string, KeyId>> = {
   openai: "openai", claudeApi: "anthropic", xaiApi: "xai", grok: "xai", openrouter: "openrouter", mistral: "mistral", cerebras: "cerebras",
-  groq: "groq", meta: "meta", deepseek: "deepseek", opencodeGo: "opencodeGo", openaiCompat: "openaiCompat",
+  groq: "groq", meta: "meta", deepseek: "deepseek", openaiCompat: "openaiCompat",
 };
 
 export function keyForInstance(instanceId: string | undefined): KeyId | undefined {

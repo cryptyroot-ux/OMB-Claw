@@ -31,8 +31,8 @@ const SIMPLE_NAME_KEYS: Record<ApprovalMode, LocaleKey> = {
 
 /** Simple mode's name for a level, the one the bot panel uses. Antigravity's full-access grant shows as Auto, as it
  * does in Advanced. */
-export function simpleApprovalName(mode: ApprovalMode, driverKind?: string): string {
-  return t(SIMPLE_NAME_KEYS[driverKind === "antigravityAgent" && mode === "full" ? "auto" : mode]);
+export function simpleApprovalName(mode: ApprovalMode, _driverKind?: string): string {
+  return t(SIMPLE_NAME_KEYS[mode]);
 }
 
 export interface ApprovalModeOption {
@@ -58,17 +58,9 @@ export function approvalModeOptionsFor(driverKind: string, trustedModesAvailable
     .filter((option) => supportsApprovalMode(driverKind, option.mode)
       // Antigravity has no native reviewer: its full-access grant is shown as Auto below, and the real Auto, which
       // behaves as Ask, is not offered.
-      && (driverKind !== "antigravityAgent" || option.mode !== "auto")
+      && true
       && (trustedModesAvailable || option.mode !== "custom"))
     .map((option) => {
-      if (driverKind === "antigravityAgent" && option.mode === "full") {
-        return {
-          ...option,
-          label: t("approvalMode.antigravity.label"),
-          chip: t("approvalMode.auto.chip"),
-          description: t("approvalMode.antigravity.desc"),
-        };
-      }
       return option.mode === "auto" && !hasNativeAutoReview(driverKind)
         ? { ...option, description: t("approvalMode.noNativeReview") }
         : option;
@@ -84,6 +76,6 @@ export function approvalModeSelectionRequiresLocalDesktop(
 }
 
 /** The mode to show as chosen. Security: old Antigravity Auto settings still ask; never display or silently grant the new Auto until it is chosen. */
-export function shownApprovalMode(driverKind: string, savedMode: ApprovalMode): ApprovalMode {
-  return driverKind === "antigravityAgent" && savedMode === "auto" ? "ask" : savedMode;
+export function shownApprovalMode(_driverKind: string, savedMode: ApprovalMode): ApprovalMode {
+  return savedMode;
 }

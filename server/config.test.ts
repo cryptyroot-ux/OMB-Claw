@@ -42,9 +42,7 @@ import { cacheUntilConfigChanges,
   withInstanceCli,
   WORKSPACE_CREDENTIAL_ENV,
   PROVIDER_CREDENTIAL_ENV,
-  mergeOpenCodeProviderKeys,
-  openCodeProviderKeys,
-  OPENCODE_PROVIDER_KEY_LIMIT,
+
   type AppConfig,
 } from "./config.ts";
 
@@ -206,7 +204,6 @@ describe("configuration boundaries", () => {
     expect(() => parseStoredConfig({ browserProfiles: [{ id: "../evil", name: "Unsafe" }] })).toThrow(
       "browserProfiles.0.id",
     );
-    expect(() => parseConfigPatch({ opencodeGo: { apiKey: 42 } })).toThrow("opencodeGo.apiKey");
     expect(() => parseConfigPatch({ profile: [] })).toThrow("profile");
   });
 
@@ -226,11 +223,11 @@ describe("configuration boundaries", () => {
   });
 
   it("round-trips an opaque model variant without converting omission to none", () => {
-    const defaultModelSelection = { instanceId: "opencodeGo", model: "provider/model", variant: "minimal" };
+    const defaultModelSelection = { instanceId: "grok", model: "provider/model", variant: "minimal" };
     expect(parseConfigPatch({ defaultModelSelection })).toEqual({ defaultModelSelection });
     expect(parseStoredConfig({ defaultModelSelection })).toEqual({ defaultModelSelection });
-    expect(parseConfigPatch({ defaultModelSelection: { instanceId: "opencodeGo", model: "provider/model" } }))
-      .toEqual({ defaultModelSelection: { instanceId: "opencodeGo", model: "provider/model" } });
+    expect(parseConfigPatch({ defaultModelSelection: { instanceId: "grok", model: "provider/model" } }))
+      .toEqual({ defaultModelSelection: { instanceId: "grok", model: "provider/model" } });
   });
 
   it.each<JsonValue>([
@@ -242,9 +239,6 @@ describe("configuration boundaries", () => {
     { instanceId: "codex", model: "   " },
     { instanceId: "codex", model: 42 },
     { instanceId: "codex", model: "model", effort: "turbo" },
-    { instanceId: "opencodeGo", model: "model", variant: "" },
-    { instanceId: "opencodeGo", model: "model", variant: " low " },
-    { instanceId: "opencodeGo", model: "model", variant: "low", effort: "high" },
   ])("rejects an invalid default model selection: %j", (defaultModelSelection) => {
     expect(() => parseStoredConfig({ defaultModelSelection })).toThrow("defaultModelSelection");
     expect(() => parseConfigPatch({ defaultModelSelection })).toThrow("defaultModelSelection");
@@ -840,13 +834,6 @@ describe("default fleet", () => {
     expect(env).toEqual({ META_API_KEY: "muse-code-login", KEEP: "yes" });
   });
 
-  it("keeps OpenCode's existing Groq key separate from the built-in Groq key", () => {
-    const map = instanceConfigs({ groq: { key: "groq-workspace" },
-      opencodeGo: { providerKeys: { GROQ_API_KEY: "groq-opencode" } } });
-    expect(map.groq.environment).toEqual({ GROQ_API_KEY: "groq-workspace" });
-    expect(map.opencodeGo.environment).toEqual({ GROQ_API_KEY: "groq-opencode" });
-    expect(map.codex.environment).toEqual({});
-  });
 
   it("adds a separate ChatGPT plan account without copying Codex credentials", () => {
     const cfg: AppConfig = { instances: { codex: { driver: "codex", config: { cli: "/fixture/codex" }, environment: { CODEX_HOME: "/other-account", OPENAI_API_KEY: "not-for-plan" } } } };
@@ -1094,11 +1081,9 @@ describe("Instance CLI override", () => {
     const cfg: AppConfig = {
       xai: { key: "SECRET-XAI" },
       box: { token: "SECRET-BOAT" },
-      opencodeGo: { apiKey: "SECRET-OCG" },
       instances: {
         claude: { driver: "claudeAgent" },
         grokApi: { driver: "grok" },
-        opencode: { driver: "opencodeGo" },
       },
     };
     const set = withInstanceCli(cfg, "claude", "/opt/claude");
@@ -1150,136 +1135,21 @@ describe("Instance CLI override", () => {
   });
 });
 
-describe("OpenCode Go configuration", () => {
-  it("injects the key only into OpenCode Go instances", () => {
-    const cfg: AppConfig = {
-      opencodeGo: { apiKey: "secret-value" },
-      instances: {
-        opencode: { driver: "opencodeGo" },
-        grok: { driver: "grokAgent" },
-      },
-    };
 
-    const instances = instanceConfigs(cfg);
-    expect(instances.opencode.environment).toEqual({ OPENCODE_API_KEY: "secret-value" });
-    expect(instances.grok.environment).toEqual({});
-  });
-
-  it("hands the saved provider keys to OpenCode instances only, under their own names", () => {
-    const cfg: AppConfig = {
-      opencodeGo: { apiKey: "ocg", providerKeys: { VENICE_API_KEY: "venice-secret", ANTHROPIC_API_KEY: "own-anthropic" } },
-      instances: {
-        opencode: { driver: "opencodeGo", environment: { VENICE_API_KEY: "instance-venice" } },
-        grok: { driver: "grokAgent" },
-        codex: { driver: "codex" },
-        compat: { driver: "openai-compat" },
-      },
-    };
-    const instances = instanceConfigs(cfg);
-    expect(instances.opencode.environment).toEqual({
-      OPENCODE_API_KEY: "ocg", VENICE_API_KEY: "venice-secret", ANTHROPIC_API_KEY: "own-anthropic",
-    });
-    for (const id of ["grok", "codex", "compat"]) {
-      expect(JSON.stringify(instances[id].environment ?? {})).not.toMatch(/venice-secret|own-anthropic/);
-    }
-    expect(persistableInstanceConfigs(cfg).opencode.environment).toEqual({ VENICE_API_KEY: "instance-venice" });
-  });
-
-  it("skips a hand-edited provider key OpenCode could not be given, without dropping the file", () => {
-    const stored = parseStoredConfig({
-      profile: { name: "Ada" },
-      opencodeGo: { providerKeys: {
-        VENICE_API_KEY: "venice-secret", venice_api_key: "lower", OPENCODE_API_KEY: "shadow", OMB_CLOUD_BOAT_TOKEN: "relay",
-        BOX_TOKEN: "boat", NODE_OPTIONS: "--require x", GROQ_API_KEY: "has space",
-        DEEPSEEK_API_KEY: 42, TOGETHER_API_KEY: null, FIREWORKS_API_KEY: { key: "nested" },
-      } },
-    });
-    expect(stored.profile?.name).toBe("Ada");
-    expect(openCodeProviderKeys(stored)).toEqual({ VENICE_API_KEY: "venice-secret" });
-    expect(instanceConfigs({ ...stored, instances: { opencode: { driver: "opencodeGo" } } }).opencode.environment)
-      .toEqual({ VENICE_API_KEY: "venice-secret" });
-    const notAMap = parseStoredConfig({ profile: { name: "Ada" }, opencodeGo: { apiKey: "ocg", providerKeys: "VENICE_API_KEY=x" } });
-    expect(notAMap.profile?.name).toBe("Ada");
-    expect(notAMap.opencodeGo).toEqual({ apiKey: "ocg", providerKeys: {} });
-  });
-});
-
-describe("saving OpenCode provider keys", () => {
-  const saved: AppConfig = { opencodeGo: { providerKeys: { VENICE_API_KEY: "old-venice", GROQ_API_KEY: "groq" } } };
-
-  it("preserves Cline provider keys for OpenCode without sharing its saved key with other engines", () => {
-    const keys = { CLINE_API_KEY: "cline-provider-fixture" };
-    expect(mergeOpenCodeProviderKeys({}, keys)).toEqual({ ok: true, keys });
-    const instances = instanceConfigs({ opencodeGo: { providerKeys: keys }, instances: {
-      opencode: { driver: "opencodeGo" }, cline: { driver: "clineAgent" }, grok: { driver: "grokAgent" },
-    } });
-    expect(instances.opencode.environment).toMatchObject(keys);
-    expect(instances.cline.environment).toEqual({});
-    expect(instances.grok.environment).toEqual({});
-  });
-
-  it("saves, replaces and removes one name at a time, keeping the rest", () => {
-    expect(mergeOpenCodeProviderKeys(saved, { VENICE_API_KEY: "  new-venice ", DEEPSEEK_API_KEY: "deep" }))
-      .toEqual({ ok: true, keys: { DEEPSEEK_API_KEY: "deep", GROQ_API_KEY: "groq", VENICE_API_KEY: "new-venice" } });
-    expect(mergeOpenCodeProviderKeys(saved, { GROQ_API_KEY: "" })).toEqual({ ok: true, keys: { VENICE_API_KEY: "old-venice" } });
-    expect(mergeOpenCodeProviderKeys(saved, { NOPE_KEY: "" })).toEqual({ ok: true, keys: saved.opencodeGo!.providerKeys });
-    expect(mergeOpenCodeProviderKeys({}, { ANTHROPIC_API_KEY: "sk-ant" })).toEqual({ ok: true, keys: { ANTHROPIC_API_KEY: "sk-ant" } });
-  });
-
-  it("refuses names OpenCode does not read or that OpenMaus keeps, with the fix", () => {
-    const refused = (name: string) => {
-      const result = mergeOpenCodeProviderKeys(saved, { [name]: "a-key" });
-      expect(result.ok, name).toBe(false);
-      return result.ok ? "" : result.error;
-    };
-    for (const name of ["venice_api_key", "VENICE", "NODE_OPTIONS", "PATH", "LD_PRELOAD", "1_API_KEY", "__proto__", `${"A".repeat(70)}_KEY`]) {
-      expect(refused(name)).toContain("such as VENICE_API_KEY");
-    }
-    expect(refused("OPENCODE_API_KEY")).toContain("OpenCode API key box");
-    for (const name of ["OPENCODE_SERVER_KEY", "OMB_CLOUD_BOAT_TOKEN", "OMB_LICENSE_KEY", "BOX_TOKEN", "COMPOSIO_API_KEY",
-      "OPENAI_COMPAT_API_KEY", "XAI_API_KEY", "MISTRAL_API_KEY", "CURSOR_API_KEY", "FACTORY_API_KEY"]) {
-      expect(refused(name)).toBe(`OpenMaus keeps ${name} for itself, so OpenCode can't be given it here. Put this key in opencode.json instead.`);
-    }
-  });
-
-  it("refuses a value that is not a key, and more than the limit", () => {
-    for (const value of ["two words", "line\nbreak", "x".repeat(4097)]) {
-      const result = mergeOpenCodeProviderKeys(saved, { VENICE_API_KEY: value });
-      expect(result).toEqual({ ok: false, error: "That doesn't look like a key. Paste only the key, with no spaces." });
-    }
-    const full: AppConfig = { opencodeGo: { providerKeys: Object.fromEntries(
-      Array.from({ length: OPENCODE_PROVIDER_KEY_LIMIT }, (_, index) => [`P${index}_API_KEY`, `key-${index}`])) } };
-    expect(mergeOpenCodeProviderKeys(full, { P0_API_KEY: "replaced" }).ok).toBe(true);
-    expect(mergeOpenCodeProviderKeys(full, { EXTRA_API_KEY: "one-too-many" })).toEqual({
-      ok: false, error: `OpenCode can hold up to ${OPENCODE_PROVIDER_KEY_LIMIT} provider keys. Remove one you no longer use, then add this one.`,
-    });
-  });
-
-  it("is a patch the config route accepts, and changing it reloads the engines", () => {
-    expect(parseConfigPatch({ opencodeGo: { providerKeys: { VENICE_API_KEY: "v", GROQ_API_KEY: "" } } }))
-      .toEqual({ opencodeGo: { providerKeys: { VENICE_API_KEY: "v", GROQ_API_KEY: "" } } });
-    expect(() => parseConfigPatch({ opencodeGo: { providerKeys: { VENICE_API_KEY: 42 } } })).toThrow("opencodeGo.providerKeys");
-    expect(reloaded({ opencodeGo: { providerKeys: { VENICE_API_KEY: "v" } } })).toEqual(["opencodeGo"]);
-    expect(reloaded({ opencodeGo: { providerKeys: {} } })).toEqual([]);
-  });
-});
 
 describe("credential env narrowing", () => {
   it("injects each credential only into the driver that consumes it", () => {
     const cfg: AppConfig = {
       xai: { key: "SECRET-XAI" },
       box: { token: "SECRET-BOAT" },
-      opencodeGo: { apiKey: "SECRET-OCG" },
       instances: {
         grokApi: { driver: "grok" },
-        opencode: { driver: "opencodeGo" },
         claude: { driver: "claudeAgent" },
         codex: { driver: "codex" },
       },
     };
     const instances = instanceConfigs(cfg);
     expect(instances.grokApi.environment).toEqual({ XAI_API_KEY: "SECRET-XAI" });
-    expect(instances.opencode.environment).toEqual({ OPENCODE_API_KEY: "SECRET-OCG" });
     for (const entry of Object.values(instances)) expect(Object.values(entry.environment ?? {})).not.toContain("SECRET-BOAT");
     expect(instances.claude.environment).toEqual({});
     expect(instances.codex.environment).toEqual({});
@@ -1445,21 +1315,18 @@ describe("credential env preference", () => {
       JSON.stringify({
         xai: { key: "file-xai", url: "https://api.example.test/v1" },
         box: { token: "file-box" },
-        opencodeGo: { apiKey: "file-ocg" },
         tts: { key: "file-tts", fishKey: "file-fish", voice: "narrator" },
         imageGen: { key: "file-image" },
       }),
     );
     process.env.XAI_API_KEY = "env-xai";
     process.env.BOX_TOKEN = "env-box";
-    process.env.OPENCODE_API_KEY = "env-ocg";
     process.env.OMB_TTS_KEY = "env-tts";
     process.env.OMB_FISH_AUDIO_API_KEY = "env-fish";
     process.env.OMB_OPENAI_IMAGE_KEY = "env-image";
     const cfg = loadConfig();
     expect(cfg.xai).toEqual({ key: "env-xai", url: "https://api.example.test/v1" });
     expect(cfg.box).toEqual({ token: "env-box" });
-    expect(cfg.opencodeGo).toEqual({ apiKey: "env-ocg" });
     expect(cfg.tts).toEqual({ key: "env-tts", fishKey: "env-fish", voice: "narrator" });
     expect(cfg.imageGen).toEqual({ key: "env-image" });
   });

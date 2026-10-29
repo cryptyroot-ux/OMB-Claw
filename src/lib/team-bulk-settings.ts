@@ -32,7 +32,7 @@ const engineOf = (bot: Bot, instances: readonly InstanceInfo[]) =>
   instances.find((instance) => instance.instanceId === bot.modelSelection.instanceId);
 
 export function teamModeOffered(driverKind: string | undefined, mode: TeamApprovalMode): boolean {
-  return supportsApprovalMode(driverKind, mode) && !(driverKind === "antigravityAgent" && mode === "auto");
+  return supportsApprovalMode(driverKind, mode);
 }
 
 export function teamModelChoices(bots: readonly Bot[], instances: readonly InstanceInfo[]): Array<{ id: string; label: string; engines: string[] }> {

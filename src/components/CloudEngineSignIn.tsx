@@ -16,8 +16,8 @@ import { withViewTransition } from "@/components/onboarding/view-transition";
 import { useStore, type InstanceInfo } from "@/state/store";
 import { openKeySettings } from "./keys/key-focus";
 
-type Choice = "claude" | "codex" | "grok";
-type ChoiceKind = "claudeAgent" | "codex" | "grokAgent";
+type Choice = "grok";
+type ChoiceKind = "grokAgent";
 
 export function cloudEngine(instances: readonly InstanceInfo[], driverKind: ChoiceKind): InstanceInfo | undefined {
   return instances.find((instance) => instance.driverKind === driverKind && instance.access !== "custom" && !instance.readOnly);
@@ -35,13 +35,10 @@ export function useCloudEngineChoices() {
       setChecking(false);
     }
   };
-  const choices: Array<{ id: Choice; driverKind: ChoiceKind; label: string; hint: string }> = [
-    { id: "claude", driverKind: "claudeAgent", label: t("cloudSignIn.claude"), hint: t("cloudSignIn.claudeHint") },
-    { id: "codex", driverKind: "codex", label: t("cloudSignIn.codex"), hint: t("cloudSignIn.codexHint") },
-    ...(cloudEngine(state.instances, "grokAgent")?.snapshot.state === "available"
+  const choices: Array<{ id: Choice; driverKind: ChoiceKind; label: string; hint: string }> =
+    cloudEngine(state.instances, "grokAgent")?.snapshot.state === "available"
       ? [{ id: "grok" as const, driverKind: "grokAgent" as const, label: t("cloudSignIn.grok"), hint: t("cloudSignIn.grokHint") }]
-      : []),
-  ];
+      : [];
   const live = useEngineLiveCheck(choices.flatMap((choice) => cloudEngine(state.instances, choice.driverKind) ?? []));
   return { instances: state.instances, dispatch, open, setOpen, checking, recheck, choices, live };
 }

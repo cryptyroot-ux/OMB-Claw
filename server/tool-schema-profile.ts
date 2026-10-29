@@ -43,7 +43,7 @@ const OPENROUTER_HOST = /(?:^|\.)openrouter\.ai$/;
  * route one of Moonshot's models to Moonshot's endpoint. */
 export function toolSchemaProfileFor(target: { engine?: string; url?: string; model?: string }): ToolSchemaProfile | undefined {
   const host = hostOf(target.url);
-  if (target.engine === "kimiAgent" || MOONSHOT_HOST.test(host)) return PROFILES.moonshot;
+  if (MOONSHOT_HOST.test(host)) return PROFILES.moonshot;
   if (OPENROUTER_HOST.test(host) && /^moonshotai\//i.test(target.model ?? "")) return PROFILES.moonshot;
   return undefined;
 }

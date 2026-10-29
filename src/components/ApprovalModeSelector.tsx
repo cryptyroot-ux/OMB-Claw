@@ -189,7 +189,7 @@ export function ApprovalModeSelector({
               );
             })}
             {!visibleOptions.some((option) => option.mode === "full") && allowlistAction}
-            {!trustedModesAvailable && (trustedModesNotice || driverKind === "codex" || requiresLocalDesktop) && (
+            {!trustedModesAvailable && (trustedModesNotice || requiresLocalDesktop) && (
               <div className="px-2 py-1.5 text-[12px] leading-snug text-ink-tertiary">
                 {trustedModesNotice ?? t("approvalMode.customLocalOnlyDot")}
               </div>

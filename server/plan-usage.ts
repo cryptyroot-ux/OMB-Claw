@@ -1,14 +1,10 @@
 // Access tokens stay in the request header only, never in the JSON result.
-import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { InstanceConfigMap } from "./contracts.ts";
-import { resolveClaudeConfigDir } from "./drivers/claude.ts";
-import { codexHome } from "./drivers/codex-identity.ts";
-import { harnessHome, sealedFixture } from "./env-path.ts";
+import { harnessHome } from "./env-path.ts";
 
-export type PlanDriver = "claude" | "codex" | "grok";
+export type PlanDriver = "grok";
 
 export interface PlanWindow {
   available: boolean;
@@ -95,19 +91,11 @@ export interface CredentialSource {
   readText: (path: string) => string | null;
   env?: NodeJS.ProcessEnv;
   now?: () => number;
-  readClaudeKeychain?: (service: string) => string | null | Promise<string | null>;
 }
 
 const PROVIDER_TIMEOUT_MS = 8_000;
 const PLAN_USAGE_CACHE_MS = 45_000;
 const CREDENTIAL_READ_MAX_BYTES = 1_000_000;
-const KEYCHAIN_TIMEOUT_MS = 5_000;
-const KEYCHAIN_MAX_BUFFER = 1_000_000;
-const CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials";
-const CLAUDE_MODEL_FAMILIES = ["opus", "sonnet", "haiku"];
-
-const CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
-const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 const GROK_CREDITS_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
 const GROK_BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing";
 const GROK_SETTINGS_URL = "https://cli-chat-proxy.grok.com/v1/settings";
@@ -120,14 +108,10 @@ const MONTH_MIN_SECONDS = 27 * 86400;
 const MONTH_MAX_SECONDS = 32 * 86400;
 
 const DRIVER_OF: Record<string, PlanDriver> = {
-  claudeAgent: "claude",
-  codex: "codex",
   grokAgent: "grok",
 };
 
 const PRODUCT_NAME: Record<PlanDriver, string> = {
-  claude: "Claude",
-  codex: "Codex",
   grok: "Grok",
 };
 
@@ -147,41 +131,6 @@ export function planAccountsFromInstances(instances: InstanceConfigMap): PlanAcc
     });
   }
   return accounts;
-}
-
-export function parseClaudeUsage(body: unknown): PlanWindows {
-  const root = claudeRoot(body);
-  const extra: PlanExtra[] = [];
-  const models: PlanModelUsage[] = [];
-  if (root) {
-    for (const [key, value] of Object.entries(root)) {
-      if (key === "five_hour" || key === "seven_day") continue;
-      if (!/^[a-z][a-z0-9_]{0,40}$/i.test(key)) continue;
-      const window = readClaudeWindow(value);
-      if (!window) continue;
-      const model = claudeModelWindow(key);
-      if (model) addModelWindow(models, model.name, extraLine(model.window, window));
-      else extra.push(extraLine(claudeExtraLabel(key), window));
-    }
-  }
-  sortModelWindows(models);
-  return {
-    plan: planLabel(root?.subscription_type ?? root?.plan ?? root?.plan_type),
-    fiveHour: (root && readClaudeWindow(root.five_hour)) ?? closedWindow(),
-    weekly: (root && readClaudeWindow(root.seven_day)) ?? closedWindow(),
-    extra,
-    models,
-  };
-}
-
-export function parseCodexUsage(body: unknown): PlanWindows {
-  const root = asRecord(body);
-  const assigned = assignDurationWindows(durationWindows(root?.rate_limit));
-  const models: PlanModelUsage[] = [];
-  const extra = [...assigned.extra];
-  if (root) collectCodexNamedLimits(root, models, extra);
-  sortModelWindows(models);
-  return { ...assigned, extra, models, plan: planLabel(root?.plan_type ?? root?.plan) };
 }
 
 export function parseGrokUsage(credits: unknown, billing?: unknown, settings?: unknown): PlanWindows {
@@ -213,72 +162,6 @@ export function parseGrokUsage(credits: unknown, billing?: unknown, settings?: u
   if (billing !== undefined) place(readGrokSample(billing));
   sortModelWindows(models);
   return { plan: grokPlan(settings), fiveHour, weekly, extra, models };
-}
-
-export function fileCredentialReader(source: CredentialSource): CredentialReader {
-  const env = source.env ?? process.env;
-  const now = source.now ?? Date.now;
-  return {
-    async read(account) {
-      const merged: NodeJS.ProcessEnv = { ...env, ...account.environment };
-      const at = now();
-      if (account.driver === "claude") return readClaudeCredential(account, merged, source, at);
-      if (account.driver === "codex") return readCodexCredential(merged, source.readText, at);
-      return readGrokCredential(merged, source.readText, at);
-    },
-  };
-}
-
-export function defaultCredentialReader(env: NodeJS.ProcessEnv = process.env): CredentialReader {
-  return fileCredentialReader({
-    env,
-    readText(path) {
-      try {
-        const stat = statSync(path);
-        if (!stat.isFile() || stat.size > CREDENTIAL_READ_MAX_BYTES) return null;
-        return readFileSync(path, "utf8");
-      } catch {
-        return null;
-      }
-    },
-    ...(process.platform === "darwin" && !sealedFixture() ? { readClaudeKeychain: readDarwinClaudeKeychain } : {}),
-  });
-}
-
-export async function fetchPlanUsage(accounts: PlanAccount[], deps: PlanUsageDeps): Promise<PlanUsageReport> {
-  const now = deps.now?.() ?? Date.now();
-  const providers = await Promise.all(accounts.map((account) => fetchProvider(account, deps)));
-  return { fetchedAt: new Date(now).toISOString(), providers };
-}
-
-let cachedReport: { at: number; key: string; report: PlanUsageReport } | null = null;
-
-export function clearPlanUsageCache(): void {
-  cachedReport = null;
-}
-
-export async function loadPlanUsage(input: {
-  accounts: PlanAccount[];
-  refresh?: boolean;
-  now?: number;
-  fetch?: PlanFetch;
-  credentials?: CredentialReader;
-  env?: NodeJS.ProcessEnv;
-  timeoutMs?: number;
-}): Promise<PlanUsageReport> {
-  const now = input.now ?? Date.now();
-  const key = planUsageCacheKey(input.accounts);
-  if (!input.refresh && cachedReport && cachedReport.key === key && now - cachedReport.at < PLAN_USAGE_CACHE_MS) {
-    return cachedReport.report;
-  }
-  const report = await fetchPlanUsage(input.accounts, {
-    fetch: input.fetch ?? ((url, init) => globalThis.fetch(url, init)),
-    credentials: input.credentials ?? defaultCredentialReader(input.env),
-    now: () => now,
-    timeoutMs: input.timeoutMs,
-  });
-  cachedReport = { at: now, key, report };
-  return report;
 }
 
 function closedWindow(): PlanWindow {
@@ -382,168 +265,10 @@ function unexpectedUsage(driver: PlanDriver): string {
   return `${PRODUCT_NAME[driver]} returned an unexpected usage response`;
 }
 
-function claudeRoot(body: unknown): Record<string, unknown> | null {
-  const root = asRecord(body);
-  if (!root) return null;
-  if ("five_hour" in root || "seven_day" in root) return root;
-  const nested = asRecord(root.usage) ?? asRecord(root.windows);
-  if (nested && ("five_hour" in nested || "seven_day" in nested)) return nested;
-  return root;
-}
-
-function readClaudeWindow(value: unknown): PlanWindow | null {
-  const record = asRecord(value);
-  if (!record) return null;
-  const utilization = finiteNumber(record.utilization);
-  if (utilization == null) return null;
-  return openWindow(utilization, isoOrNull(record.resets_at ?? record.resetsAt));
-}
-
-function claudeExtraLabel(key: string): string {
-  const suffix = key.startsWith("seven_day_")
-    ? key.slice("seven_day_".length)
-    : key.replace(/^five_hour_/, "");
-  return titleWords(suffix);
-}
-
-function titleWords(suffix: string): string {
-  const words = suffix.split("_").filter((part) => part.length > 0);
-  if (words.length === 0) return "Window";
-  return words.map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()).join(" ");
-}
-
-function claudeModelWindow(key: string): { name: string; window: string } | null {
-  const weekly = key.startsWith("seven_day_");
-  const fiveHour = key.startsWith("five_hour_");
-  if (!weekly && !fiveHour) return null;
-  const suffix = key.slice(weekly ? "seven_day_".length : "five_hour_".length);
-  const lower = suffix.toLowerCase();
-  const family = CLAUDE_MODEL_FAMILIES.find((name) => lower === name || lower.startsWith(`${name}_`));
-  if (!family) return null;
-  return { name: titleWords(suffix), window: weekly ? "Weekly" : "5-hour" };
-}
-
-function addModelWindow(models: PlanModelUsage[], name: string, line: PlanExtra): void {
-  const found = models.find((model) => model.name.toLowerCase() === name.toLowerCase());
-  if (found) found.windows.push(line);
-  else models.push({ name, windows: [line] });
-}
-
-function sortModelWindows(models: PlanModelUsage[]): void {
-  const rank = (label: string) => (label === "5-hour" ? 0 : label === "Weekly" ? 1 : 2);
-  for (const model of models) model.windows.sort((a, b) => rank(a.label) - rank(b.label));
-}
-
-interface DurationWindow {
-  used: number;
-  seconds: number;
-  resetsAt: string | null;
-}
-
-function readDurationWindow(value: unknown): DurationWindow | null {
-  const record = asRecord(value);
-  if (!record) return null;
-  const used = finiteNumber(record.used_percent);
-  let seconds = finiteNumber(record.limit_window_seconds);
-  if (seconds == null) {
-    const minutes = finiteNumber(record.window_minutes);
-    if (minutes != null) seconds = minutes * 60;
-  }
-  if (used == null || seconds == null || seconds <= 0) return null;
-  return { used, seconds, resetsAt: isoOrNull(record.reset_at ?? record.resetAt) };
-}
-
-function durationWindows(node: unknown): DurationWindow[] {
-  const record = asRecord(node);
-  if (!record) return [];
-  const source = asRecord(record.rate_limit) ?? record;
-  const windows: DurationWindow[] = [];
-  for (const key of ["primary_window", "secondary_window"]) {
-    const window = readDurationWindow(source[key]);
-    if (window) windows.push(window);
-  }
-  if (windows.length === 0) {
-    const self = readDurationWindow(source);
-    if (self) windows.push(self);
-  }
-  return windows;
-}
-
-function codexLimitName(record: Record<string, unknown>): string | null {
-  return planLabel(record.limit_name) ?? planLabel(record.metered_feature) ?? planLabel(record.name);
-}
-
-function pushAssignedLines(assigned: PlanWindows, into: PlanExtra[]): void {
-  if (assigned.fiveHour.available) into.push(extraLine("5-hour", assigned.fiveHour));
-  if (assigned.weekly.available) into.push(extraLine("Weekly", assigned.weekly));
-  into.push(...assigned.extra);
-}
-
-function collectCodexNamedLimits(root: Record<string, unknown>, models: PlanModelUsage[], extra: PlanExtra[]): void {
-  const buckets: Array<{ name: string | null; node: unknown }> = [];
-  if (root.code_review_rate_limit) buckets.push({ name: "Code review", node: root.code_review_rate_limit });
-  const additional = root.additional_rate_limits;
-  if (Array.isArray(additional)) {
-    for (const item of additional) {
-      const record = asRecord(item);
-      buckets.push({ name: record ? codexLimitName(record) : null, node: item });
-    }
-  } else {
-    const named = asRecord(additional);
-    if (named) {
-      for (const [key, value] of Object.entries(named)) buckets.push({ name: planLabel(key), node: value });
-    }
-  }
-  for (const bucket of buckets) {
-    const assigned = assignDurationWindows(durationWindows(bucket.node));
-    if (!bucket.name) {
-      pushAssignedLines(assigned, extra);
-      continue;
-    }
-    const lines: PlanExtra[] = [];
-    pushAssignedLines(assigned, lines);
-    for (const line of lines) addModelWindow(models, bucket.name, line);
-  }
-}
-
-function readGrokProducts(body: unknown, sample: GrokSample): Array<{ name: string; window: PlanExtra }> {
-  const root = asRecord(body);
-  if (!root) return [];
-  const config = asRecord(root.config) ?? root;
-  if (!Array.isArray(config.productUsage)) return [];
-  const label = sample.slot === "fiveHour" ? "5-hour" : sample.slot === "weekly" ? "Weekly" : sample.slot === "monthly" ? "Monthly" : "Used";
-  const rows: Array<{ name: string; window: PlanExtra }> = [];
-  for (const item of config.productUsage) {
-    const record = asRecord(item);
-    if (!record) continue;
-    const raw = typeof record.product === "string" ? record.product : typeof record.name === "string" ? record.name : "";
-    const name = planLabel(raw.replace(/([a-z])([A-Z])/g, "$1 $2"));
-    const used = finiteNumber(record.usagePercent ?? record.usedPercent ?? record.utilization);
-    if (!name || used == null) continue;
-    rows.push({ name, window: extraLine(label, openWindow(used, sample.resetsAt)) });
-  }
-  return rows;
-}
-
 function durationLabel(seconds: number): string {
   if (seconds >= 86400) return `${Math.max(1, Math.round(seconds / 86400))}-day`;
   if (seconds >= 3600) return `${Math.max(1, Math.round(seconds / 3600))}-hour`;
   return `${Math.max(1, Math.round(seconds / 60))}-minute`;
-}
-
-function assignDurationWindows(windows: DurationWindow[]): PlanWindows {
-  let fiveHour = closedWindow();
-  let weekly = closedWindow();
-  const extra: PlanExtra[] = [];
-  for (const window of windows) {
-    const open = openWindow(window.used, window.resetsAt);
-    const fiveHourSlot = window.seconds >= FIVE_HOUR_MIN_SECONDS && window.seconds <= FIVE_HOUR_MAX_SECONDS;
-    const weeklySlot = window.seconds >= WEEK_MIN_SECONDS && window.seconds <= WEEK_MAX_SECONDS;
-    if (fiveHourSlot && !fiveHour.available) fiveHour = open;
-    else if (weeklySlot && !weekly.available) weekly = open;
-    else extra.push(extraLine(durationLabel(window.seconds), open));
-  }
-  return { plan: null, fiveHour, weekly, extra, models: [] };
 }
 
 type GrokSlot = "fiveHour" | "weekly" | "monthly" | "other";
@@ -595,6 +320,25 @@ function grokPlan(settings: unknown): string | null {
   return planLabel(nested?.subscription_tier_display ?? root.subscription_tier_display);
 }
 
+function readGrokProducts(body: unknown, sample: GrokSample): Array<{ name: string; window: PlanExtra }> {
+  const root = asRecord(body);
+  if (!root) return [];
+  const config = asRecord(root.config) ?? root;
+  if (!Array.isArray(config.productUsage)) return [];
+  const label = sample.slot === "fiveHour" ? "5-hour" : sample.slot === "weekly" ? "Weekly" : sample.slot === "monthly" ? "Monthly" : "Used";
+  const rows: Array<{ name: string; window: PlanExtra }> = [];
+  for (const item of config.productUsage) {
+    const record = asRecord(item);
+    if (!record) continue;
+    const raw = typeof record.product === "string" ? record.product : typeof record.name === "string" ? record.name : "";
+    const name = planLabel(raw.replace(/([a-z])([A-Z])/g, "$1 $2"));
+    const used = finiteNumber(record.usagePercent ?? record.usedPercent ?? record.utilization);
+    if (!name || used == null) continue;
+    rows.push({ name, window: extraLine(label, openWindow(used, sample.resetsAt)) });
+  }
+  return rows;
+}
+
 function planUsageCacheKey(accounts: PlanAccount[]): string {
   return accounts.map((account) => {
     const environment = Object.entries(account.environment)
@@ -604,112 +348,6 @@ function planUsageCacheKey(accounts: PlanAccount[]): string {
       .join("\n");
     return [account.id, account.driver, account.name, account.configDir ?? "", environment].join("\u0000");
   }).join("\n");
-}
-
-function claudeCredentialFromText(text: string | null, now: number): PlanCredential {
-  const oauth = asRecord(asRecord(parseJson(text))?.claudeAiOauth);
-  const token = secretString(oauth?.accessToken);
-  if (!token) return missingCredential();
-  const expiry = timeMs(oauth?.expiresAt);
-  if (expiry != null && expiry <= now) return expiredCredential();
-  return { token, accountId: null, expired: false };
-}
-
-/** macOS 26 `security -w` may print the JSON secret as hex. */
-function decodeKeychainSecret(raw: string | null): string | null {
-  if (!raw) return null;
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  if (!trimmed.startsWith("{") && trimmed.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(trimmed)) {
-    return Buffer.from(trimmed, "hex").toString("utf8");
-  }
-  return trimmed;
-}
-
-function claudeKeychainServices(account: PlanAccount, env: NodeJS.ProcessEnv, resolvedDir: string): string[] {
-  if (!account.configDir?.trim() && !env.CLAUDE_CONFIG_DIR?.trim()) return [CLAUDE_KEYCHAIN_SERVICE];
-  let defaultDir: string | null = null;
-  try {
-    const withoutConfig = { ...env };
-    delete withoutConfig.CLAUDE_CONFIG_DIR;
-    defaultDir = resolveClaudeConfigDir(undefined, withoutConfig);
-  } catch {
-    defaultDir = null;
-  }
-  if (defaultDir != null && resolvedDir === defaultDir) return [CLAUDE_KEYCHAIN_SERVICE];
-  const suffix = createHash("sha256").update(resolvedDir).digest("hex").slice(0, 8);
-  return [`${CLAUDE_KEYCHAIN_SERVICE}-${suffix}`];
-}
-
-function readDarwinClaudeKeychain(service: string): Promise<string | null> {
-  if (process.platform !== "darwin") return Promise.resolve(null);
-  return new Promise((resolve) => {
-    try {
-      execFile(
-        "security",
-        ["find-generic-password", "-s", service, "-w"],
-        {
-          timeout: KEYCHAIN_TIMEOUT_MS,
-          maxBuffer: KEYCHAIN_MAX_BUFFER,
-          windowsHide: true,
-          shell: false,
-          encoding: "utf8",
-        },
-        (error, stdout) => {
-          resolve(error || !stdout ? null : stdout);
-        },
-      );
-    } catch {
-      resolve(null);
-    }
-  });
-}
-
-async function readClaudeCredential(
-  account: PlanAccount,
-  env: NodeJS.ProcessEnv,
-  source: CredentialSource,
-  now: number,
-): Promise<PlanCredential> {
-  let resolvedDir: string;
-  try {
-    resolvedDir = resolveClaudeConfigDir(account.configDir, env);
-  } catch {
-    return missingCredential();
-  }
-  const file = claudeCredentialFromText(source.readText(join(resolvedDir, ".credentials.json")), now);
-  if (file.token || !source.readClaudeKeychain) return file;
-  let sawExpired = file.expired;
-  for (const service of claudeKeychainServices(account, env, resolvedDir)) {
-    let raw: string | null = null;
-    try {
-      raw = (await source.readClaudeKeychain(service)) ?? null;
-    } catch {
-      raw = null;
-    }
-    const parsed = claudeCredentialFromText(decodeKeychainSecret(raw), now);
-    if (parsed.token) return parsed;
-    if (parsed.expired) sawExpired = true;
-  }
-  return sawExpired ? expiredCredential() : missingCredential();
-}
-
-function readCodexCredential(
-  env: NodeJS.ProcessEnv,
-  readText: (path: string) => string | null,
-  now: number,
-): PlanCredential {
-  const home = codexHome(env);
-  if (!home) return missingCredential();
-  const root = asRecord(parseJson(readText(join(home, "auth.json"))));
-  if (!root) return missingCredential();
-  const tokens = asRecord(root.tokens);
-  const token = secretString(tokens?.access_token) ?? secretString(root.access_token);
-  if (!token) return missingCredential();
-  const expiry = timeMs(tokens?.expires_at ?? tokens?.expiresAt ?? root.expires_at ?? root.expiresAt);
-  if (expiry != null && expiry <= now) return expiredCredential();
-  const accountId = secretString(tokens?.account_id) ?? secretString(root.account_id);
-  return { token, accountId, expired: false };
 }
 
 interface GrokCandidate {
@@ -755,6 +393,17 @@ function readGrokCredential(
   return sawExpired ? expiredCredential() : missingCredential();
 }
 
+function addModelWindow(models: PlanModelUsage[], name: string, line: PlanExtra): void {
+  const found = models.find((model) => model.name.toLowerCase() === name.toLowerCase());
+  if (found) found.windows.push(line);
+  else models.push({ name, windows: [line] });
+}
+
+function sortModelWindows(models: PlanModelUsage[]): void {
+  const rank = (label: string) => (label === "5-hour" ? 0 : label === "Weekly" ? 1 : 2);
+  for (const model of models) model.windows.sort((a, b) => rank(a.label) - rank(b.label));
+}
+
 function errorRow(account: PlanAccount, error: string): PlanProviderRow {
   return {
     id: account.id,
@@ -794,8 +443,6 @@ async function fetchProvider(account: PlanAccount, deps: PlanUsageDeps): Promise
   }
   if (credential.expired || !credential.token) return errorRow(account, signInAgain(account.driver));
   try {
-    if (account.driver === "claude") return await fetchClaude(account, credential.token, deps);
-    if (account.driver === "codex") return await fetchCodex(account, credential.token, credential.accountId, deps);
     return await fetchGrok(account, credential.token, deps);
   } catch {
     return errorRow(account, couldNotReach(account.driver));
@@ -840,38 +487,6 @@ function authRejected(status: number): boolean {
   return status === 401 || status === 403;
 }
 
-async function fetchClaude(account: PlanAccount, token: string, deps: PlanUsageDeps): Promise<PlanProviderRow> {
-  const result = await fetchJson(deps.fetch, CLAUDE_USAGE_URL, {
-    Authorization: `Bearer ${token}`,
-    Accept: "application/json",
-    "anthropic-beta": "oauth-2025-04-20",
-  }, deps.timeoutMs ?? PROVIDER_TIMEOUT_MS);
-  if (authRejected(result.status)) return errorRow(account, signInAgain("claude"));
-  if (!result.ok || result.body === null || typeof result.body !== "object") {
-    return errorRow(account, result.status === 0 || result.status >= 500 ? couldNotReach("claude") : unexpectedUsage("claude"));
-  }
-  return okRow(account, parseClaudeUsage(result.body));
-}
-
-async function fetchCodex(
-  account: PlanAccount,
-  token: string,
-  accountId: string | null,
-  deps: PlanUsageDeps,
-): Promise<PlanProviderRow> {
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${token}`,
-    Accept: "application/json",
-  };
-  if (accountId) headers["ChatGPT-Account-Id"] = accountId;
-  const result = await fetchJson(deps.fetch, CODEX_USAGE_URL, headers, deps.timeoutMs ?? PROVIDER_TIMEOUT_MS);
-  if (authRejected(result.status)) return errorRow(account, signInAgain("codex"));
-  if (!result.ok || result.body === null || typeof result.body !== "object") {
-    return errorRow(account, result.status === 0 || result.status >= 500 ? couldNotReach("codex") : unexpectedUsage("codex"));
-  }
-  return okRow(account, parseCodexUsage(result.body));
-}
-
 async function fetchGrok(account: PlanAccount, token: string, deps: PlanUsageDeps): Promise<PlanProviderRow> {
   const headers = {
     Authorization: `Bearer ${token}`,
@@ -896,4 +511,67 @@ async function fetchGrok(account: PlanAccount, token: string, deps: PlanUsageDep
   }
   const windows = parseGrokUsage(creditsBody, billingBody ?? undefined, settings.ok ? settings.body : undefined);
   return okRow(account, windows);
+}
+
+export function fileCredentialReader(source: CredentialSource): CredentialReader {
+  const env = source.env ?? process.env;
+  const now = source.now ?? Date.now;
+  return {
+    async read(account) {
+      const merged: NodeJS.ProcessEnv = { ...env, ...account.environment };
+      const at = now();
+      return readGrokCredential(merged, source.readText, at);
+    },
+  };
+}
+
+export function defaultCredentialReader(env: NodeJS.ProcessEnv = process.env): CredentialReader {
+  return fileCredentialReader({
+    env,
+    readText(path) {
+      try {
+        const stat = statSync(path);
+        if (!stat.isFile() || stat.size > CREDENTIAL_READ_MAX_BYTES) return null;
+        return readFileSync(path, "utf8");
+      } catch {
+        return null;
+      }
+    },
+  });
+}
+
+export async function fetchPlanUsage(accounts: PlanAccount[], deps: PlanUsageDeps): Promise<PlanUsageReport> {
+  const now = deps.now?.() ?? Date.now();
+  const providers = await Promise.all(accounts.map((account) => fetchProvider(account, deps)));
+  return { fetchedAt: new Date(now).toISOString(), providers };
+}
+
+let cachedReport: { at: number; key: string; report: PlanUsageReport } | null = null;
+
+export function clearPlanUsageCache(): void {
+  cachedReport = null;
+}
+
+export async function loadPlanUsage(input: {
+  accounts: PlanAccount[];
+  refresh?: boolean;
+  now?: number;
+  fetch?: PlanFetch;
+  credentials?: CredentialReader;
+  env?: NodeJS.ProcessEnv;
+  timeoutMs?: number;
+}): Promise<PlanUsageReport> {
+  const now = input.now ?? Date.now();
+  const key = planUsageCacheKey(input.accounts);
+  if (!input.refresh && cachedReport && cachedReport.key === key && now - cachedReport.at < PLAN_USAGE_CACHE_MS) {
+    return cachedReport.report;
+  }
+  const report = await fetchPlanUsage(input.accounts, {
+    fetch: input.fetch ?? ((url, init) => globalThis.fetch(url, init)),
+    credentials: input.credentials ?? defaultCredentialReader(input.env),
+    now: () => now,
+    timeoutMs: input.timeoutMs,
+  });
+  cachedReport = { at: now, key, report };
+  return report;
 }

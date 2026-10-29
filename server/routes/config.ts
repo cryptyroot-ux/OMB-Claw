@@ -18,7 +18,6 @@ import {
   engineLaunches,
   loadConfig,
   localVmMode,
-  mergeOpenCodeProviderKeys,
   parseConfigPatch,
   saveConfig,
   syncCredentialEnv,
@@ -92,7 +91,6 @@ export interface ConfigRouteDeps {
   /** A Team Cloud only: Settings → Profile saves the signed-in person's own profile, never the server's. False: nobody
    * signed in to save it for. */
   ownProfile?(auth: RequestAuth, profile: { name?: string; avatarUrl?: string; aboutMe?: string }): boolean;
-  resyncOpenCodeProviderKeys(): void;
   revokeEngineCapabilities(engines: ReadonlySet<string>): void;
   reloadProviders(before: Record<string, unknown>): Promise<void>;
   broadcast(payload: Record<string, unknown>): void;
@@ -106,7 +104,7 @@ export function createConfigRoutes(deps: ConfigRouteDeps): RouteHandler {
     localVmIdleMs, localVmIdles, localVmActiveThreads, localVmLifecycleBusy, localVmImageBusy, localVmModeChangeBusy,
     providerConfigBusy, computerProviderConfigTransitions, managedBoatOwners, providerOperationConflict,
     perBotLocalVmCountForModeChange, checkedModelSelection, policyModelRefusal, browserSessionSpec, configStatus,
-    configForAccess, resyncOpenCodeProviderKeys, revokeEngineCapabilities, reloadProviders, broadcast, drainQueuedSends, ownProfile,
+    configForAccess, revokeEngineCapabilities, reloadProviders, broadcast, drainQueuedSends, ownProfile,
   } = deps;
   return async ({ req, res, url, path, method, auth, json, readBody }) => {
     // API keys are never echoed back: booleans only.
@@ -115,7 +113,7 @@ export function createConfigRoutes(deps: ConfigRouteDeps): RouteHandler {
     }
     if ((method === "PUT" || method === "PATCH") && path === "/api/config") {
       const body = await readBody(req);
-      if (hostedModels && ["instances", "anthropic", "openai", "openrouter", "openaiCompat", "xai", "mistral", "cerebras", "groq", "meta", "opencodeGo"].some(key => Object.hasOwn(body, key))) return json(res, 403, { error: HOSTED_PROVIDER_SETTINGS_ERROR });
+      if (hostedModels && ["instances", "anthropic", "openai", "openrouter", "openaiCompat", "xai", "mistral", "cerebras", "groq", "meta"].some(key => Object.hasOwn(body, key))) return json(res, 403, { error: HOSTED_PROVIDER_SETTINGS_ERROR });
       const patch = parseConfigPatch(body);
       if (patch.profile && ownProfile) {
         // The address is the verified claim's; a profile names no other.
@@ -472,12 +470,6 @@ export function createConfigRoutes(deps: ConfigRouteDeps): RouteHandler {
         const conflict = providerOperationConflict(provider);
         if (conflict) return json(res, 409, { error: conflict });
       }
-      // Only the named keys change; merged with no await before the save.
-      if (patch.opencodeGo?.providerKeys) {
-        const merged = mergeOpenCodeProviderKeys(cfg, patch.opencodeGo.providerKeys);
-        if (!merged.ok) return json(res, 400, { error: merged.error });
-        patch.opencodeGo = { ...patch.opencodeGo, providerKeys: merged.keys };
-      }
       const browserCleanupRequests: BrowserCleanupRequest[] = [];
       if (profileControlConflict()) return json(res, 409, { error: "Release browser control before deleting its profile." });
       try {
@@ -516,7 +508,6 @@ export function createConfigRoutes(deps: ConfigRouteDeps): RouteHandler {
           if (persisted.xai?.key !== undefined) persisted.xai.key = "";
           if (persisted.composio?.apiKey !== undefined) persisted.composio.apiKey = "";
           if (persisted.box?.token !== undefined) persisted.box.token = "";
-          if (persisted.opencodeGo?.apiKey !== undefined) persisted.opencodeGo.apiKey = "";
           if (persisted.tts?.key !== undefined) persisted.tts.key = "";
           if (persisted.tts?.fishKey !== undefined) persisted.tts.fishKey = "";
           if (persisted.decider?.key !== undefined) persisted.decider.key = "";
@@ -557,7 +548,6 @@ export function createConfigRoutes(deps: ConfigRouteDeps): RouteHandler {
       let browserReferenceCleanupError: unknown = null;
       if (patch.signIn !== undefined) {
         sessions.revalidateEmailSessions();
-        resyncOpenCodeProviderKeys();
       }
       if (!lendingEnabled()) {
         sharedComputers.close();

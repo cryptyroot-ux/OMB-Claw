@@ -39,7 +39,7 @@ export function createOrchestrator(dependencies: {
   readonly intelligence?: {
     readonly enabled: boolean;
     readonly decide: (input: { text: string; messageCount?: number; toolCount?: number; hasImages?: boolean; hasCode?: boolean; messages: ReadonlyArray<{ content: string | null | undefined }>; primaryModel: import("./contracts.ts").ProviderModelRef }) => { readonly allowed: boolean; readonly reason?: string; readonly route: { readonly candidates: ReadonlyArray<import("./contracts.ts").ProviderModelRef> } };
-    readonly verify?: (output: string) => Promise<{ ok: boolean; feedback: string }> | { ok: boolean; feedback: string };
+    readonly verify?: (output: string, step?: { successCriteria?: string; description?: string; text?: string; id?: string }) => Promise<{ ok: boolean; feedback: string }> | { ok: boolean; feedback: string };
   };
   readonly swarm?: {
     readonly enabled: boolean;
@@ -208,7 +208,7 @@ export function createOrchestrator(dependencies: {
             if (stepResult.status === "failed") break;
 
             if (dependencies.intelligence?.verify && stepResult.output) {
-              const verification = await dependencies.intelligence.verify(stepResult.output);
+              const verification = await dependencies.intelligence.verify(stepResult.output, step);
               if (!verification.ok) {
                 retryFeedback = verification.feedback;
                 attempt++;

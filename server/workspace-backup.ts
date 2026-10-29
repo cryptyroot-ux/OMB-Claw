@@ -173,10 +173,8 @@ function assertLocalAuthOutsideSnapshot(dataDir: string): void {
     const home = String(environment.HOME || environment.USERPROFILE || homedir());
     for (const field of fields) check(environment[field], field, home);
   }
-  for (const instance of Object.values(instances)) {
-    if (!record(instance) || instance.driver !== "claudeAgent" || !record(instance.config)) continue;
-    const environment = { ...process.env, ...(record(instance.environment) ? instance.environment : {}) };
-    check(instance.config.configDir, "config.configDir", String(environment.HOME || environment.USERPROFILE || homedir()));
+  for (const _instance of Object.values(instances)) {
+    // external engine removed
   }
 }
 function passwordKey(password: string, salt: Buffer): Promise<Buffer> {

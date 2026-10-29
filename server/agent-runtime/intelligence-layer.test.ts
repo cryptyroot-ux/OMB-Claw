@@ -92,3 +92,67 @@ describe("intelligence-layer", () => {
     expect(result.attempts).toBe(1);
   });
 });
+
+describe("IntelligenceLayer processStream (Pivot-style)", () => {
+  it("yields classify, route, plan, execute, verify, done phases", async () => {
+    const planJson = JSON.stringify({
+      steps: [{ id: "s1", description: "do thing", type: "think", expectedTools: [], dependencies: [], successCriteria: "done" }],
+    });
+    const verifyJson = JSON.stringify({ verified: true, evidence: "ok", confidence: 1 });
+
+    let calls = 0;
+    const modelCaller = async (_p: string) => { calls++; return calls === 1 ? planJson : verifyJson; };
+    const toolRunner = async (_s: any) => ({ ok: true, text: "r" });
+
+    const layer = createIntelligenceLayer({
+      enabled: true,
+      tiers: { cheap: [], standard: [], premium: [] },
+      modelCaller,
+      toolRunner,
+      threadId: "",
+    });
+
+    const phases: string[] = [];
+    for await (const chunk of layer.processStream("Write hello", "")) {
+      phases.push(chunk.phase);
+    }
+    expect(phases).toContain("classify");
+    expect(phases).toContain("done");
+    expect(phases.length).toBeGreaterThanOrEqual(5);
+  });
+
+  it("process() completes end-to-end", async () => {
+    const planJson = JSON.stringify({
+      steps: [{ id: "s1", description: "do thing", type: "think", expectedTools: [], dependencies: [], successCriteria: "done" }],
+    });
+    const verifyJson = JSON.stringify({ verified: true, evidence: "ok", confidence: 1 });
+
+    let calls = 0;
+    const modelCaller = async (_p: string) => { calls++; return calls === 1 ? planJson : verifyJson; };
+    const toolRunner = async (_s: any) => ({ ok: true, text: "result" });
+
+    const layer = createIntelligenceLayer({
+      enabled: true,
+      tiers: { cheap: [], standard: [], premium: [] },
+      modelCaller,
+      toolRunner,
+      threadId: "",
+    });
+
+    const result = await layer.process("Write a hello function", "");
+    expect(result.completed).toBe(true);
+    expect(result.stepsCompleted).toBe(1);
+    expect(result.stepsFailed).toBe(0);
+    expect(result.error).toBeUndefined();
+  });
+
+  it("returns disabled result when enabled is false", async () => {
+    const layer = createIntelligenceLayer({
+      enabled: false,
+      tiers: { cheap: [], standard: [], premium: [] },
+    });
+    const result = await layer.process("hello", "");
+    expect(result.completed).toBe(false);
+    expect(result.error).toBe("intelligence layer disabled");
+  });
+});

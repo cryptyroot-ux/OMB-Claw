@@ -5,8 +5,7 @@ type ModelOption = InstanceInfo["models"]["options"][number];
 export type ModelChoice = ModelOption & { nativeModel?: string; variant?: string };
 
 /** Antigravity exposes one model plus a thinking level; present its levels wherever models are picked. */
-export function modelChoices(instance: InstanceInfo, options: readonly ModelOption[]): ModelChoice[] {
-  if (instance.driverKind !== "antigravityAgent") return [...options];
+export function modelChoices(_instance: InstanceInfo, options: readonly ModelOption[]): ModelChoice[] {
   return options.flatMap((option) => option.variants?.length
     ? option.variants.map((variant) => ({
       ...option,

@@ -84,10 +84,10 @@ it("sends an API key to the existing model-provider keys in Settings → API key
 });
 
 it("picks the person's own engine, never a local-model or read-only one, and says when there is none", () => {
-  const local = engine("claude-local", "claudeAgent", "paste-code", { access: "custom" });
-  const company = engine("company.acme.anthropic", "claudeAgent", "paste-code", { readOnly: true });
-  expect(cloudEngine([local, company, claude], "claudeAgent")).toBe(claude);
-  expect(cloudEngine([local, company], "claudeAgent")).toBeUndefined();
+  const local = engine("claude-local", "grokAgent", "paste-code", { access: "custom" });
+  const company = engine("company.acme.anthropic", "grokAgent", "paste-code", { readOnly: true });
+  expect(cloudEngine([local, company, claude], "grokAgent")).toBe(claude);
+  expect(cloudEngine([local, company], "grokAgent")).toBeUndefined();
   store.instances = [codex];
   choose("claude");
   expect(render().html).toContain("isn&#x27;t available in the Cloud yet");

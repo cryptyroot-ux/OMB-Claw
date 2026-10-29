@@ -132,35 +132,10 @@ export function ProviderMark({ driverKind, size, className }: IconProps & { driv
     case "grok":
     case "grokAgent":
       return <GrokMark size={size} className={className} />;
-    case "claudeAgent":
-      return <ClaudeMark size={size} className={className} />;
     case "mistral":
       return <PresetProviderMark preset="mistral" size={size} className={className} />;
     case "meta":
-    case "museCode":
       return <PresetProviderMark preset="meta" size={size} className={className} />;
-    case "codex":
-      return <CodexMark size={size} className={className} />;
-    case "kimiAgent":
-      return <KimiMark size={size} className={className} />;
-    case "droidAgent":
-      return <DroidMark size={size} className={className} />;
-    case "cursorAgent":
-      return <CursorMark size={size} className={className} />;
-    case "antigravityAgent":
-      return <AntigravityMark size={size} className={className} />;
-    case "opencodeGo":
-      return <OpenCodeMark size={size} className={className} />;
-    case "qwenAgent":
-      return <QwenMark size={size} className={className} />;
-    case "hermesAgent":
-      return <HermesMark size={size} className={className} />;
-    case "deepseekAgent":
-      return <DeepSeekMark size={size} className={className} />;
-    case "piAgent":
-      return <PiMark size={size} className={className} />;
-    case "copilotAgent":
-      return <CopilotMark size={size} className={className} />;
     default:
       return (
         <span className={cn("flex size-full items-center justify-center text-[10px] font-semibold tracking-tight text-ink-secondary", className)}>

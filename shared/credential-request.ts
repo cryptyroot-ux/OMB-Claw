@@ -16,12 +16,6 @@ export const CREDENTIAL_TARGETS = {
     placeholder: "Paste your Boat API key",
     helpUrl: "https://docs.boat.dev/api-keys",
   },
-  opencodeGoApiKey: {
-    label: "OpenCode API key",
-    description: "Used for OpenCode Zen and Go.",
-    placeholder: "Paste your OpenCode API key",
-    helpUrl: "https://opencode.ai/docs/providers/",
-  },
   ttsKey: {
     label: "ElevenLabs API key",
     description: "Enables text-to-speech voices in calls.",
@@ -55,7 +49,6 @@ export type ConfigCredentialTargetId = Exclude<CredentialTargetId, LoginCredenti
 export type CredentialConfig = {
   xai?: { key?: string };
   box?: { token?: string };
-  opencodeGo?: { apiKey?: string };
   tts?: { key?: string; fishKey?: string };
   imageGen?: { key?: string };
   /** Not in the settings file: the server fills it from its login store. */
@@ -83,8 +76,6 @@ export function credentialConfigPatch(id: ConfigCredentialTargetId, value: strin
       return { xai: { key: value } };
     case "boxToken":
       return { box: { token: value } };
-    case "opencodeGoApiKey":
-      return { opencodeGo: { apiKey: value } };
     case "ttsKey":
       return { tts: { key: value } };
     case "fishAudioKey":
@@ -100,8 +91,6 @@ export function credentialIsConfigured(config: CredentialConfig, id: CredentialT
       return Boolean(config.xai?.key);
     case "boxToken":
       return Boolean(config.box?.token);
-    case "opencodeGoApiKey":
-      return Boolean(config.opencodeGo?.apiKey);
     case "ttsKey":
       return Boolean(config.tts?.key);
     case "fishAudioKey":

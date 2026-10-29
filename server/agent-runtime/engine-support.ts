@@ -1,37 +1,29 @@
-// This OMB build does not support external agent engines. Their drivers stay
-// in the tree but are not registered, so stored selections become unavailable
-// rather than launching a CLI or ACP process.
-const EXTERNAL_AGENT_ENGINES = new Set([
-  "claudeAgent",
-  "codex",
-  "piAgent",
-  "antigravityAgent",
-  "customAcp",
-  "grokAgent",
-  "geminiAgent",
-  "kimiAgent",
-  "droidAgent",
-  "cursorAgent",
-  "qwenAgent",
-  "clineAgent",
-  "deepseekAgent",
-  "museCode",
-  "hermes",
-  "opencodeGo",
+// OMB-Claw adalah platform agen AI mandiri. Semua driver agen eksternal
+// (CLI/ACP: Claude, Codex, Hermes, Pi, Antigravity, OpenCode, Qwen, Cursor,
+// dll.) telah dihapus total. Hanya driver API native yang dijalankan di atas
+// OMB-owned native agent engine. Provider/model dihubungkan melalui
+// ModelAdapter, bukan melalui CLI atau proses ACP eksternal.
+
+/** API drivers whose turns run on the OMB-owned native loop. */
+const NATIVE_API_DRIVER_KINDS = new Set([
+  "openai-compat",
+  "grok",
+  "groq",
+  "meta",
+  "minimax",
+  "mistral",
+  "cerebras",
+  "anthropic",
+  "gemini",
+  "openai-responses",
 ]);
-
-export function isExternalAgentEngine(driverKind: string): boolean {
-  return EXTERNAL_AGENT_ENGINES.has(driverKind);
-}
-
-export function supportedAgentDrivers<T extends { readonly driverKind: string }>(drivers: readonly T[]): readonly T[] {
-  return drivers.filter((driver) => !isExternalAgentEngine(driver.driverKind));
-}
-
-/** API drivers whose turns run on the OMB-owned native loop. Claude, Codex and the ACP engines are not here: this
- * build does not register them. */
-const NATIVE_API_DRIVER_KINDS = new Set(["openai-compat", "grok", "groq", "meta", "minimax", "mistral", "cerebras", "anthropic", "gemini", "openai-responses"]);
 
 export function usesNativeAgentEngine(driverKind: string): boolean {
   return NATIVE_API_DRIVER_KINDS.has(driverKind);
+}
+
+export function supportedAgentDrivers<T extends { readonly driverKind: string }>(
+  drivers: readonly T[],
+): readonly T[] {
+  return drivers.filter((driver) => usesNativeAgentEngine(driver.driverKind));
 }

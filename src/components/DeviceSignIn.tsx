@@ -18,8 +18,8 @@ export interface DeviceSignInStatus {
   message?: string;
 }
 
-export function deviceSignInProvider(driverKind: string): DeviceSignInProvider {
-  return driverKind === "grokAgent" ? "grok" : "codex";
+export function deviceSignInProvider(_driverKind: string): DeviceSignInProvider {
+  return "grok";
 }
 
 export const DEVICE_SIGN_IN_COPY: Record<DeviceSignInProvider, Record<"description" | "start" | "enterCode" | "open" | "security" | "connected" | "connectedAccount" | "failed" | "invalidChallenge", LocaleKey>> = {
@@ -56,8 +56,8 @@ function endedFlow(phase: "expired" | "failed", browserPkce = false): DeviceSign
 }
 
 /** Security: never turn arbitrary process output into a sign-in link; the server validates this address too. */
-export function codexDeviceLink(value: string | null): string | null {
-  return deviceSignInLink("codex", value);
+export function codexDeviceLink(_value: string | null): string | null {
+  return null;
 }
 
 export function chatgptPlanLink(value: string | null): string | null {
@@ -71,7 +71,7 @@ export function chatgptPlanLink(value: string | null): string | null {
 
 const chatgptButton = "flex w-full items-center justify-center gap-2 rounded-lg border border-black/20 bg-white px-3 py-2 text-[13px] font-semibold text-black hover:opacity-85 disabled:opacity-50";
 
-export function DeviceSignInProgress({ auth, browserPkce = false, provider = "codex" }: { auth: DeviceSignInStatus; browserPkce?: boolean; provider?: DeviceSignInProvider }) {
+export function DeviceSignInProgress({ auth, browserPkce = false, provider = "grok" }: { auth: DeviceSignInStatus; browserPkce?: boolean; provider?: DeviceSignInProvider }) {
   const { state: codeCopy, copy: copyCode } = useCopyFeedback(auth.userCode ?? "");
   const copy = DEVICE_SIGN_IN_COPY[provider];
   const link = browserPkce ? chatgptPlanLink(auth.authorizationUrl) : deviceSignInLink(provider, auth.authorizationUrl, auth.userCode);
@@ -122,7 +122,7 @@ export function DeviceSignInProgress({ auth, browserPkce = false, provider = "co
 }
 
 /** `autoStart` begins at once; `onDone` hears the outcome so an account list can close the panel. */
-export function DeviceSignIn({ instanceId, browserPkce = false, provider = "codex", autoStart = false, onDone }: {
+export function DeviceSignIn({ instanceId, browserPkce = false, provider = "grok", autoStart = false, onDone }: {
   instanceId: string;
   browserPkce?: boolean;
   provider?: DeviceSignInProvider;
@@ -233,7 +233,7 @@ export function DeviceSignIn({ instanceId, browserPkce = false, provider = "code
         </button>
       )}
       {error && <p role="alert" className="text-[12px] text-danger">{error}</p>}
-      {!browserPkce && provider === "codex" && <p className="text-[11px] leading-relaxed text-ink-secondary">{t("engineSetup.device.enableHint")}</p>}
+      
     </div>
   );
 }

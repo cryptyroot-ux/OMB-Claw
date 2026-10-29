@@ -279,8 +279,8 @@ function TrialCreditFailedRow({ kind, onRetry }: { kind: TrialCreditRefusal; onR
   return <ErrorRow message={t(TRIAL_CREDIT_LINE[kind])} action={{ label: t("chat.error.connectOwnAi"), onClick: () => dispatch({ type: "toggleAppSettings", open: true, section: "engines" }) }} />;
 }
 
-export function claudeUpdateTarget(engine: InstanceInfo | undefined): InstanceInfo | undefined {
-  return engine?.driverKind === "claudeAgent" && !engine.readOnly ? engine : undefined;
+export function claudeUpdateTarget(_engine: InstanceInfo | undefined): InstanceInfo | undefined {
+  return undefined;
 }
 
 export function FailedTurnRow({ tool, engine, onRetry, botId, threadId }: {

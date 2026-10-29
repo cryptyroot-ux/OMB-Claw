@@ -408,7 +408,7 @@ function ManagedEngineSetup({ instance, signInOnly }: { instance: InstanceInfo; 
 
 export function isApiKeyEngine(instance: InstanceInfo | undefined): boolean {
   if (!instance || instance.access !== "api" || instance.managed) return false;
-  return instance.driverKind !== "claudeAgent" || Boolean(instance.snapshot.version);
+  return true;
 }
 
 export function hasSavedApiKey(instance: InstanceInfo): boolean {

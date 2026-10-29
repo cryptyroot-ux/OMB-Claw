@@ -276,7 +276,7 @@ export function managedOpenRouterModels(models: unknown): Record<string, { name:
 export function initialConfig(seed: WorkspaceSeed): string {
   const config: Record<string, unknown> = { signIn: { admins: seed.admins, members: seed.members } };
   if (seed.anthropicKey) config.anthropic = { key: seed.anthropicKey, ...(seed.anthropicUrl ? { url: seed.anthropicUrl } : {}) };
-  if (seed.openrouterDefault && seed.openrouterModels?.length) config.defaultModelSelection = { instanceId: "opencodeGo", model: `${MANAGED_OPENROUTER}/${seed.openrouterModels[0]}` };
+  if (seed.openrouterDefault && seed.openrouterModels?.length) config.defaultModelSelection = { instanceId: "openrouter", model: `${MANAGED_OPENROUTER}/${seed.openrouterModels[0]}` };
   if (seed.monthlyCapUsd !== undefined) config.budgets = { monthlyUsd: seed.monthlyCapUsd };
   return `${JSON.stringify(config, null, 2)}\n`;
 }

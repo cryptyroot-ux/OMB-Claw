@@ -68,8 +68,6 @@ export const KEY_PROVIDERS: readonly Provider[] = [
   { id: "meta", label: "Meta", for: ["meta"], config: keyedUrl("meta") },
   { id: "openaiCompat", label: "OpenAI-compatible", for: ["openaiCompat"], config: (cfg) => cfg.openaiCompat?.key
     ? { openaiCompat: Object.fromEntries(Object.entries(cfg.openaiCompat).filter(([, value]) => typeof value === "string" && value)) } : null },
-  { id: "opencodeGo", label: "OpenCode", for: ["opencodeGo"], config: (cfg) => cfg.opencodeGo?.apiKey || Object.keys(cfg.opencodeGo?.providerKeys ?? {}).length
-    ? { opencodeGo: { ...(cfg.opencodeGo!.apiKey ? { apiKey: cfg.opencodeGo!.apiKey } : {}), ...(cfg.opencodeGo!.providerKeys ? { providerKeys: cfg.opencodeGo!.providerKeys } : {}) } } : null },
 ];
 
 const LOCAL_NAME = /(?:^|\.)(?:localhost|local|lan|home|internal|ts\.net)$/iu;

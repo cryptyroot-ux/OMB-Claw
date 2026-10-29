@@ -15,7 +15,6 @@ import {
 const MAPPINGS: Array<[ConfigCredentialTargetId, CredentialConfig]> = [
   ["xaiApiKey", { xai: { key: "secret" } }],
   ["boxToken", { box: { token: "secret" } }],
-  ["opencodeGoApiKey", { opencodeGo: { apiKey: "secret" } }],
   ["ttsKey", { tts: { key: "secret" } }],
   ["fishAudioKey", { tts: { fishKey: "secret" } }],
   ["openaiImageApiKey", { imageGen: { key: "secret" } }],
@@ -52,13 +51,7 @@ describe("credential request allowlist", () => {
     expect(credentialIsConfigured({ tts: { key: "" } }, "ttsKey")).toBe(false);
     expect(credentialIsConfigured({ tts: { fishKey: "secret" } }, "fishAudioKey")).toBe(true);
     expect(credentialIsConfigured({ tts: { fishKey: "" } }, "fishAudioKey")).toBe(false);
-    expect(Object.keys(CREDENTIAL_TARGETS)).toHaveLength(7);
-  });
-
-  // The key becomes OPENCODE_API_KEY, which only OpenCode Zen and Go read: the
-  // card must not promise other providers a key it never reaches.
-  it("says the OpenCode key is for Zen and Go only", () => {
-    expect(CREDENTIAL_TARGETS.opencodeGoApiKey.description).toBe("Used for OpenCode Zen and Go.");
+    expect(Object.keys(CREDENTIAL_TARGETS)).toHaveLength(6);
   });
 
   it("supersedes open room cards only for the bot that requested them", () => {

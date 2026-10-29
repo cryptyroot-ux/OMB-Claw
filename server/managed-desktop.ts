@@ -55,20 +55,20 @@ export function legacyCompanyInstanceId(connection: Pick<ManagedDesktopConnectio
 const instanceSignature = (connection: ManagedDesktopConnection | null) =>
   signature(connection && (({ expiresAt: _expiresAt, suspended: _suspended, ...identity }) => identity)(connection));
 
-export function companyInstanceConfigs(connection: ManagedDesktopConnection, runtimeDirectory: string): InstanceConfigMap {
+export function companyInstanceConfigs(connection: ManagedDesktopConnection, _runtimeDirectory: string): InstanceConfigMap {
   const entries: InstanceConfigMap = {};
   for (const provider of connection.providers) {
     if (!provider.configured || !provider.models.length) continue;
     const id = companyInstanceId(connection, provider.id), base = `${connection.portalOrigin}/api/desktop/gateway/${provider.id}`;
     const displayName = `Company · ${connection.organizationName} · ${provider.id === "anthropic" ? "Claude" : provider.id === "openai" ? "Codex" : "OpenRouter"}`;
     if (provider.id === "anthropic") entries[id] = {
-      driver: "claudeAgent", displayName,
-      config: { configDir: join(runtimeDirectory, id, "claude"), managed: true },
+      driver: "anthropic", displayName,
+      config: { managed: true },
       environment: { ANTHROPIC_API_KEY: connection.token, ANTHROPIC_AUTH_TOKEN: connection.token, ANTHROPIC_BASE_URL: base, ANTHROPIC_MODEL: provider.models[0] },
     };
     if (provider.id === "openai") entries[id] = {
-      driver: "codex", displayName, config: { managed: { url: `${base}/v1`, models: provider.models } },
-      environment: { OPENMAUSBOT_COMPANY_API_KEY: connection.token, CODEX_HOME: join(runtimeDirectory, id, "codex") },
+      driver: "openai-compat", displayName, config: { url: `${base}/v1`, apiKeyEnv: "OPENMAUSBOT_COMPANY_API_KEY", model: provider.models[0] },
+      environment: { OPENMAUSBOT_COMPANY_API_KEY: connection.token },
     };
     if (provider.id === "openrouter") entries[id] = {
       driver: "openai-compat", displayName, config: { url: `${base}/v1`, apiKeyEnv: "OPENMAUSBOT_COMPANY_API_KEY", model: provider.models[0], provider: "" },
@@ -127,8 +127,8 @@ export class ManagedDesktopProviders {
       const configs = companyInstanceConfigs(connection, directory);
       for (const [id, entry] of Object.entries(configs)) {
         if (this.options.registry.entries().some(existing => existing.instanceId === id)) throw new Error("Company instance conflicts with an existing account.");
-        if (entry.driver === "claudeAgent" || entry.driver === "codex") {
-          this.ensureDirectory(["providers", "company", id, entry.driver === "claudeAgent" ? "claude" : "codex"]);
+        if (entry.driver === "anthropic" || entry.driver === "openai-compat") {
+          this.ensureDirectory(["providers", "company", id, entry.driver === "anthropic" ? "anthropic" : "openai"]);
         }
         this.ids.add(id); this.known.add(id);
       }

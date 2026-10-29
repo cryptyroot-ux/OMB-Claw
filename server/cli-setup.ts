@@ -121,47 +121,6 @@ async function chooseModel(io: SetupIo, models: ModelCatalog): Promise<string> {
   }
 }
 
-const NATIVE = [
-  { id: "codex", driver: "codex", label: "ChatGPT / Codex — sign in with your account", cli: "codex", pkg: "@openai/codex" },
-  { id: "claude", driver: "claudeAgent", label: "Claude Code — sign in with your account", cli: "claude", pkg: "@anthropic-ai/claude-code" },
-] as const;
-
-async function connectNative(
-  choice: typeof NATIVE[number], id: string, entry: InstanceConfig, io: SetupIo, deps: SetupDependencies,
-): Promise<ModelCatalog> {
-  const cli = typeof rawObject(entry.config).cli === "string" ? rawObject(entry.config).cli as string : choice.cli;
-  io.log("Connecting your account…");
-  io.log("Sign-in stays with your provider. Its account limits apply; OpenMausBot never asks for your password.");
-  let state = await deps.inspect(id, entry);
-  if (state.snapshot.state !== "available") {
-    if (cli !== choice.cli) throw new Error("Your custom CLI path is unavailable. Fix that path in Settings before running setup again.");
-    if (!await io.confirm(`Install ${choice.cli} with npm install -g ${choice.pkg}?`, true)) throw new SetupCancelled();
-    await deps.runCli("npm", ["install", "-g", choice.pkg]);
-    state = await deps.inspect(id, entry);
-    if (state.snapshot.state !== "available") throw new Error(`${choice.cli} is still unavailable. Check the installation output and try again.`);
-  }
-  if (!state.snapshot.authenticated) {
-    let args = ["auth", "login"];
-    if (choice.id === "codex") {
-      const method = await io.choose("How would you like to sign in?", [
-        "Open a browser on this computer", "Use a device code (SSH / remote server)",
-      ], process.env.SSH_CONNECTION ? 1 : 0);
-      args = method === 1 ? ["login", "--device-auth"] : ["login"];
-    }
-    if (args.includes("--device-auth")) io.log("Enable device-code login in ChatGPT security settings if your account requests it.");
-    await deps.runCli(cli, args, entry.environment);
-    state = await deps.inspect(id, entry);
-    if (state.snapshot.state !== "available" || !state.snapshot.authenticated) {
-      throw new Error("Sign-in was not confirmed. Your OpenMausBot settings are unchanged; complete provider sign-in and try again.");
-    }
-  } else {
-    io.log("Existing sign-in found — you do not need to sign in again.");
-  }
-  if (state.snapshot.update) io.log(`${state.snapshot.update.title}: ${state.snapshot.update.command}`);
-  io.log("Sign-in confirmed. Model access is checked by the provider when you send your first message.");
-  return state.models;
-}
-
 export async function runSetup(
   options: { dataDir: string; port: number },
   io: SetupIo = defaultSetupIo(),
@@ -174,14 +133,13 @@ export async function runSetup(
     const cfg = loadConfig();
     const runtime = instanceConfigs(cfg);
     const existing = Object.entries(runtime).filter(([id, entry]) =>
-      !!cfg.instances?.[id] && ["codex", "claudeAgent", "openai-compat"].includes(entry.driver) && entry.enabled !== false);
+      !!cfg.instances?.[id] && ["openai-compat"].includes(entry.driver) && entry.enabled !== false);
     io.log("\nWelcome to OpenMausBot\n");
     io.log("Let's connect your AI. Choose a provider, then a model.");
     io.log("Existing bots and conversations stay untouched. Ctrl-C cancels.");
     io.log("You can add integrations and change settings later.\n");
     const existingDefault = existing.findIndex(([id]) => id === cfg.defaultModelSelection?.instanceId);
     const providerOptions = [
-      ...NATIVE.map((n) => n.label),
       "API key — OpenAI, OpenRouter, Groq or a compatible service (chat only)",
       ...existing.map(([id, entry]) => `Use existing: ${entry.displayName ?? id}${id === cfg.defaultModelSelection?.instanceId ? " — current" : ""}`),
     ];
@@ -193,20 +151,8 @@ export async function runSetup(
     for (;;) {
       pick ??= await io.choose("Choose your AI connection", providerOptions, existingDefault < 0 ? 0 : existingDefault + 3);
       const prior = pick >= 3 ? existing[pick - 3] : undefined;
-      const native = pick < 2 ? NATIVE[pick] : NATIVE.find((n) => n.driver === prior?.[1].driver);
       try {
-        if (native) {
-          // Reuse native provider settings; an ID the user repurposed keeps its connection.
-          id = prior?.[0] ?? native.id;
-          if (!prior && runtime[id] && runtime[id]!.driver !== native.driver) id = `${native.id}-${randomUUID().slice(0, 8)}`;
-          entry = { ...(cfg.instances?.[id] ?? { driver: native.driver }), enabled: true };
-          const models = await connectNative(native, id, entry, io, deps);
-          const saved = cfg.defaultModelSelection;
-          model = await chooseModel(io, {
-            ...models,
-            default: saved?.instanceId === id ? saved.model : models.default,
-          });
-        } else {
+        {
           io.log("Connect an API key");
           io.log("API usage is billed separately from ChatGPT/Claude subscriptions.");
           io.log("This connection supports chat and approved MCP tools when the model supports tool calling. Native computer use requires another engine.");

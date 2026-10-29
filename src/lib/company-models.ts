@@ -31,7 +31,7 @@ export interface CompanySwitchPlan {
 
 export function planCompanySwitch(bots: readonly Bot[], instances: readonly InstanceInfo[]): CompanySwitchPlan {
   const runnable = instances.filter((instance) => isCompanyInstance(instance) && instanceCanRun(instance));
-  const target = runnable.find((instance) => instance.driverKind === "claudeAgent") ?? runnable[0];
+  const target = runnable[0];
   if (!target) return { bots: [], needsAsk: [] };
   const plan: CompanySwitchPlan = { target, bots: [], needsAsk: [] };
   const driverOf = (instanceId: string) => instances.find((instance) => instance.instanceId === instanceId)?.driverKind;

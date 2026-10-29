@@ -44,11 +44,9 @@ function fixture(url: string, ai: boolean, bots: number): unknown {
   }
   if (path === "/api/instances") {
     return { instances: [{
-      instanceId: "claude", driverKind: "claudeAgent", displayName: "Claude", install: { docsUrl: "https://docs.anthropic.com" },
       authentication: { method: "paste-code" }, capabilities: { agentsMcp: true },
       snapshot: { state: "available", authenticated: ai }, models: { default: "sonnet", options: [] },
     }, {
-      instanceId: "codex", driverKind: "codex", displayName: "Codex", install: { docsUrl: "https://example.test" },
       snapshot: { state: "unavailable", authenticated: false }, models: { default: "m", options: [] },
     }] };
   }

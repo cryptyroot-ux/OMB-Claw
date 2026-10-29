@@ -7,7 +7,6 @@ import type { EngineInstall, StandaloneRelease } from "./contracts.ts";
 import { DATA_DIR, stripWorkspaceCredentialEnv } from "./config.ts";
 import { npmEnginesPrefix } from "./engine-roots.ts";
 import { registerStandaloneBinDirs, standaloneAssetFor, standaloneRunEnv } from "./engine-standalone.ts";
-import { STANDALONE_RELEASES } from "./standalone-releases.ts";
 import { augmentedPath, findCliCandidates, registerPathDir, resetPathCache } from "./env-path.ts";
 import { execCli, killCliTree, spawnCli } from "./procs.ts";
 
@@ -26,7 +25,7 @@ export function enginesBinDir(baseDir = DATA_DIR, platform: NodeJS.Platform = pr
 
 /** Called once at boot: engines npm installed here win over any other copy on PATH. A standalone build the app installed
  * goes last instead, so a copy the person installs themselves takes over. */
-export function registerEnginesBinDir(baseDir = DATA_DIR, releases: readonly StandaloneRelease[] = STANDALONE_RELEASES): void {
+export function registerEnginesBinDir(baseDir = DATA_DIR, releases: readonly StandaloneRelease[] = []): void {
   registerPathDir(enginesBinDir(baseDir));
   registerStandaloneBinDirs(baseDir, releases);
 }

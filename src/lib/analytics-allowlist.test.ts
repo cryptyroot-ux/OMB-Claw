@@ -85,7 +85,7 @@ describe("app, role and key lists", () => {
 
   it("names a provider for every credential a bot can ask for in chat, and nothing else", () => {
     const expected = {
-      boxToken: "boat", xaiApiKey: "xai", opencodeGoApiKey: "opencode_go", ttsKey: "elevenlabs", fishAudioKey: "fish_audio",
+      boxToken: "boat", xaiApiKey: "xai", ttsKey: "elevenlabs", fishAudioKey: "fish_audio",
       openaiImageApiKey: "openai_image",
       onePasswordToken: "onepassword",
     };

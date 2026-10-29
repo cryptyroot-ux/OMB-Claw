@@ -120,8 +120,8 @@ export function EffortRow({
   );
 }
 
-const variantLabel = (option: ModelVariantOption, driverKind?: string): string =>
-  option.id === "default" && driverKind === "opencodeGo" ? t("model.variant.openCodeDefault") : option.label;
+const variantLabel = (option: ModelVariantOption): string =>
+  option.label;
 
 /** ACP variant ids are opaque; their model/session declares the available choices. */
 function variantChoices(state: Pick<AppState, "instances" | "modelVariantSessions">, selection: ModelSelection, threadId: string | undefined) {
@@ -148,7 +148,7 @@ export function ModelVariantRow({ bot, threadId, updateBotDefault, className, la
   const selection = bot.modelSelection;
   const choices = variantChoices(state, selection, threadId ?? bot.threadId);
   if (!choices) return null;
-  const { instance, reported, options } = choices;
+  const { reported, options } = choices;
   const missing = selection.variant !== undefined && !options.some((option) => option.id === selection.variant);
   const unavailable = missing && reported !== undefined;
   const current = reported?.currentValue;
@@ -166,7 +166,7 @@ export function ModelVariantRow({ bot, threadId, updateBotDefault, className, la
           onChange={(event) => choose(options[Number(event.target.value)]?.id)}>
           <option value="unset">{t("model.variant.session")}</option>
           {missing && <option value="missing" disabled>{selection.variant} ({unavailable ? t("model.variant.unavailable") : t("model.variant.unverified")})</option>}
-          {options.map((option, index) => <option key={option.id} value={String(index)}>{variantLabel(option, instance.driverKind)}</option>)}
+          {options.map((option, index) => <option key={option.id} value={String(index)}>{variantLabel(option)}</option>)}
         </Select>
       </label>
       {missing && <p className={cn("mt-1 text-ink-secondary", quiet ? "text-[12px] leading-4 text-ink-tertiary" : "text-[11px]")}>{unavailable ? t("model.variant.unavailableHelp") : t("model.variant.unverifiedHelp")}</p>}
@@ -179,7 +179,7 @@ export function ModelVariantRow({ bot, threadId, updateBotDefault, className, la
         <p className="mt-2 text-[12px] text-ink-secondary">
           {unavailable ? t("model.variant.unavailableChoice", { variant: selection.variant ?? "" })
             : missing ? t("model.variant.unverifiedChoice", { variant: selection.variant ?? "" }) : t("model.variant.none")}
-          {current !== undefined && ` ${t("model.variant.sessionValue", { variant: variantLabel(options.find((option) => option.id === current) ?? { id: current, label: current }, instance.driverKind) })}`}
+          {current !== undefined && ` ${t("model.variant.sessionValue", { variant: variantLabel(options.find((option) => option.id === current) ?? { id: current, label: current }) })}`}
         </p>
       )}
       {selection.variant !== undefined && (
@@ -197,14 +197,14 @@ export function ModelVariantRow({ bot, threadId, updateBotDefault, className, la
               type="button"
               disabled={bot.busy}
               aria-pressed={selection.variant === option.id}
-              title={t("model.variant.use", { variant: variantLabel(option, instance.driverKind) })}
+              title={t("model.variant.use", { variant: variantLabel(option) })}
               onClick={() => choose(option.id)}
               className={cn(
                 "rounded-full border px-2.5 py-1 text-[12px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 disabled:opacity-50",
                 selection.variant === option.id ? "border-accent/60 bg-control text-ink" : "border-hairline/40 text-ink-secondary hover:bg-control/60 hover:text-ink",
               )}
             >
-              {variantLabel(option, instance.driverKind)}
+              {variantLabel(option)}
             </button>
           ))}
         </div>
@@ -314,7 +314,6 @@ export function ModelPicker({
   const selectedVariantLabel = selection.variant === undefined ? undefined : variantLabel(
     active?.models.options.find((option) => option.id === selection.model)?.variants?.find((option) => option.id === selection.variant)
       ?? { id: selection.variant, label: selection.variant },
-    active?.driverKind,
   );
   const claudeAccounts = pickerInstances.filter(isClaudeAccount);
   const openaiAccounts = pickerInstances.filter((instance) => signInFamily(instance) === "openai");

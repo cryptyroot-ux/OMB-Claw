@@ -11,7 +11,7 @@ import { useStore } from "@/state/store";
 import { detectionCount, detectionSources, type SetupDetection, type SetupImportResult, type SetupSource } from "../../shared/setup-import";
 import { GrokBotMark } from "./GrokBotMark";
 import { GrokImportFlow } from "./GrokImportFlow";
-import { ClaudeMark, CodexMark, CursorMark, PresetProviderMark } from "./ProviderIcons";
+import { ClaudeMark, CursorMark, PresetProviderMark } from "./ProviderIcons";
 
 function SourceMarks({ sources }: { sources: readonly SetupSource[] }) {
   const marks = [...new Set(sources.map((source) => (source === "claudeDesktop" ? "claudeCode" : source)))];
@@ -19,7 +19,6 @@ function SourceMarks({ sources }: { sources: readonly SetupSource[] }) {
     <span className="mr-1.5 inline-flex items-center gap-1 align-[-1px]" aria-hidden="true">
       {marks.map((source) => {
         switch (source) {
-          case "codex": return <CodexMark key={source} size={12} />;
           case "cursor": return <CursorMark key={source} size={12} />;
           case "gemini": return <PresetProviderMark key={source} preset="google" size={12} />;
           default: return <ClaudeMark key={source} size={12} />;

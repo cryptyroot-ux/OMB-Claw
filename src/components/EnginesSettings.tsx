@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Check, Loader2, RefreshCw, TriangleAlert } from "lucide-react";
+import { Check, Loader2, TriangleAlert } from "lucide-react";
 
 import { api, useStore, type InstanceInfo } from "@/state/store";
 import { EngineCard, EngineSections, RefreshEngines, engineReady } from "./EngineLibrary";
@@ -9,11 +9,10 @@ import { t } from "@/lib/i18n";
 import { ApiKeyEngineManage, EngineSetup, EngineUpdateNotice, EngineWarningNotice, isApiKeyEngine } from "./EngineSetup";
 import { AppCopyNotice } from "./EngineAppCopy";
 import { forgetAppCopySwitches } from "@/state/engine-install";
-import { AccountsCard, AddAccount, accountGroupOf, accountsReady, type AccountGroup } from "./EngineAccounts";
+import { AccountsCard, accountGroupOf, accountsReady, type AccountGroup } from "./EngineAccounts";
 import { DEVICE_SIGN_IN_COPY, deviceSignInProvider } from "./DeviceSignIn";
 import { AntigravityFreeSpace } from "./AntigravityFreeSpace";
 import { CacheKeepWarmSettings } from "./CacheKeepWarmSettings";
-import { ConfirmDialog } from "./ConfirmDialog";
 import { Select } from "./Select";
 import { SettingsDisclosureRow, SettingsGroup, SettingsRows } from "./SettingsPrimitives";
 import { InstanceProviderMark } from "./ProviderIcons";
@@ -188,8 +187,7 @@ function EngineAdvanced({ instance }: { instance: InstanceInfo }) {
   const [open, setOpen] = useState(false);
   const cliMotion = useMenuMotion(open);
   const [switching, setSwitching] = useState(false);
-  const [updating, setUpdating] = useState(false);
-  const [updatedVersion, setUpdatedVersion] = useState<string | null>(null);
+  const [updating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const wasOpenFor = useRef<string | null>(null);
 
@@ -213,22 +211,7 @@ function EngineAdvanced({ instance }: { instance: InstanceInfo }) {
       .finally(() => setSwitching(false));
   };
 
-  const updateClaude = () => {
-    if (switching || updating) return;
-    setUpdating(true);
-    setUpdatedVersion(null);
-    setError(null);
-    api(`/api/instances/${encodeURIComponent(instance.instanceId)}/claude-update`, {
-      method: "POST",
-      body: JSON.stringify({}),
-    })
-      .then(async ({ version }: { version: string }) => {
-        setUpdatedVersion(version);
-        await Promise.resolve(refreshInstances()).catch(() => {});
-      })
-      .catch((e) => setError(e.message))
-      .finally(() => setUpdating(false));
-  };
+;
 
   return (
       <details className="mt-4 border-t border-hairline/40 pt-3">
@@ -250,16 +233,7 @@ function EngineAdvanced({ instance }: { instance: InstanceInfo }) {
             </span>
           )}
           <span className="flex-1" />
-          {instance.driverKind === "claudeAgent" && (
-            <button
-              onClick={updateClaude}
-              disabled={switching || updating}
-              className="flex shrink-0 items-center gap-1 text-[12px] text-ink-secondary hover:text-ink disabled:opacity-50"
-            >
-              {updating ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-              {updating ? t("engines.updating") : t("engines.updateClaude")}
-            </button>
-          )}
+
           {instance.cli && (
             <button
               onClick={reset}
@@ -282,9 +256,7 @@ function EngineAdvanced({ instance }: { instance: InstanceInfo }) {
             {t("engines.setCli")}
           </button>
         </div>
-        {updatedVersion && (
-          <div role="status" className="mt-1 text-[12px] text-success">{t("engines.claudeUpdated", { version: updatedVersion })}</div>
-        )}
+
         {error && <div role="alert" className="mt-1 text-[12px] text-danger">{error}</div>}
         {cliMotion.shown && (
           <div className={cliMotion.className} {...cliMotion.exitProps}>
@@ -299,40 +271,6 @@ function EngineAdvanced({ instance }: { instance: InstanceInfo }) {
       </details>
   );
 }
-
-function RemoveAntigravityAccount({ instance }: { instance: InstanceInfo }) {
-  const { state, dispatch, refreshInstances } = useStore();
-  const [confirming, setConfirming] = useState(false);
-  const [removing, setRemoving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const usedBy = state.bots.filter((bot) => bot.modelSelection.instanceId === instance.instanceId).length;
-  const remove = async () => {
-    setConfirming(false);
-    setRemoving(true);
-    setError(null);
-    try {
-      const { instances } = await api(`/api/instances/${encodeURIComponent(instance.instanceId)}`, { method: "DELETE" });
-      if (Array.isArray(instances)) dispatch({ type: "instances", instances });
-      else await refreshInstances();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setRemoving(false);
-    }
-  };
-  return <>
-    <div className="flex flex-wrap items-center gap-2">
-      <button type="button" disabled={removing || usedBy > 0} onClick={() => setConfirming(true)} className="rounded-lg px-2.5 py-1.5 text-[12px] font-medium text-danger hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-50">
-        {removing ? <Loader2 size={13} className="animate-spin" /> : t("accounts.remove")}
-      </button>
-      {usedBy > 0 && <p className="text-[11px] text-ink-secondary">{t("accounts.inUse", { count: String(usedBy) })}</p>}
-    </div>
-    {error && <p role="alert" className="text-[12px] text-danger">{error}</p>}
-    <ConfirmDialog open={confirming} title={t("accounts.removeTitle", { name: instance.displayName })} body={t("accounts.removeBodyAntigravity")}
-      confirmLabel={t("accounts.remove")} tone="neutral" pending={removing} onCancel={() => { if (!removing) setConfirming(false); }} onConfirm={() => void remove()} />
-  </>;
-}
-
 function EngineRow({ instance, bare = false }: { instance: InstanceInfo; bare?: boolean }) {
   const policyNote = instance.policy && <p className="mb-2 text-[12px] leading-relaxed text-ink-secondary">
     <span className="font-medium text-ink">{t("policy.managedBy", { organization: instance.policy.organizationName })}</span> · {instance.policy.reason}
@@ -364,13 +302,7 @@ function EngineRow({ instance, bare = false }: { instance: InstanceInfo; bare?: 
           )
       )}
       {instance.freeUpSpace && <AntigravityFreeSpace instance={instance} />}
-      {instance.driverKind === "antigravityAgent" && (
-        <div className="mt-3 space-y-3">
-          {instance.snapshot.authenticated && <p className="break-words text-[12px] text-ink-secondary">{instance.snapshot.account?.email ?? t("engineSetup.antigravity.emailUnavailable")}</p>}
-          <AddAccount label={t("engineSetup.antigravity.addAccount")} endpoint="/api/instances/antigravity-accounts" extra={{ sourceInstanceId: instance.instanceId }} onAdded={() => {}} />
-          {instance.instanceId.startsWith("antigravity-") && <RemoveAntigravityAccount instance={instance} />}
-        </div>
-      )}
+
       <EngineAdvanced instance={instance} />
     </EngineCard>
   );

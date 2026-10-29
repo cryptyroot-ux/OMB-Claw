@@ -53,7 +53,7 @@ describe("every credential has one home on the keys page", () => {
 
   it("covers every credential a bot can ask for in a chat", () => {
     const homes: Record<keyof typeof CREDENTIAL_TARGETS, KeyId> = {
-      xaiApiKey: "xai", boxToken: "box", opencodeGoApiKey: "opencodeGo", ttsKey: "elevenlabs", fishAudioKey: "fishAudio",
+      xaiApiKey: "xai", boxToken: "box", ttsKey: "elevenlabs", fishAudioKey: "fishAudio",
       openaiImageApiKey: "imageOpenai", onePasswordToken: "onePassword",
     };
     expect(Object.keys(homes).sort()).toEqual(Object.keys(CREDENTIAL_TARGETS).sort());

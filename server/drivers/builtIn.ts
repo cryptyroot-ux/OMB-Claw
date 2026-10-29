@@ -1,58 +1,28 @@
 import type { AnyProviderDriver } from "../contracts.ts";
-import { AntigravityDriver } from "./antigravity.ts";
-import { ClaudeDriver } from "./claude.ts";
-import { CodexDriver } from "./codex.ts";
-import { GrokDriver } from "./grok.ts";
-import { GeminiDriver } from "./gemini.ts";
 import { AnthropicDriver } from "./anthropic.ts";
-import { GrokAgentDriver } from "./acp/grok.ts";
-import { GeminiAgentDriver } from "./acp/gemini.ts";
-import { KimiAgentDriver } from "./acp/kimi.ts";
-import { DroidAgentDriver } from "./acp/droid.ts";
-import { CursorAgentDriver } from "./acp/cursor.ts";
-import { OpenCodeDriver } from "./acp/opencode-go.ts";
-import { QwenAgentDriver } from "./acp/qwen.ts";
-import { CustomAcpDriver } from "./acp/custom.ts";
-import { HermesAgentDriver } from "./acp/hermes.ts";
-import { DeepSeekAgentDriver } from "./acp/deepseek.ts";
-import { ClineAgentDriver } from "./acp/cline.ts";
-import { CopilotAgentDriver } from "./acp/copilot.ts";
+import { GeminiDriver } from "./gemini.ts";
+import { GrokDriver } from "./grok.ts";
 import { OpenAICompatDriver } from "./openai-compat.ts";
 import { OpenAIResponsesDriver } from "./openai-responses.ts";
-import { PiDriver } from "./pi.ts";
-import { MistralDriver } from "./mistral.ts";
-import { CerebrasDriver } from "./cerebras.ts";
 import { GroqDriver } from "./groq.ts";
 import { MetaDriver } from "./meta.ts";
-import { MuseCodeDriver } from "./muse-code.ts";
 import { MinimaxDriver } from "./minimax.ts";
+import { MistralDriver } from "./mistral.ts";
+import { CerebrasDriver } from "./cerebras.ts";
 
+// Hanya driver API native yang dijalankan di atas OMB-native agent engine.
+// Semua driver agen eksternal (CLI/ACP: Claude, Codex, Hermes, Pi, Antigravity,
+// OpenCode, Qwen, Cursor, dll.) telah dihapus total. OMB adalah platform agen
+// mandiri: provider/model dihubungkan melalui ModelAdapter, bukan melalui CLI eksternal.
 export const BUILT_IN_DRIVERS: readonly AnyProviderDriver[] = [
-  GrokDriver,
-  GeminiDriver,
   AnthropicDriver,
-  GrokAgentDriver,
-  GeminiAgentDriver,
-  KimiAgentDriver,
-  DroidAgentDriver,
-  CursorAgentDriver,
-  OpenCodeDriver,
-  QwenAgentDriver,
-  HermesAgentDriver,
-  ClineAgentDriver,
-  CopilotAgentDriver,
-  CustomAcpDriver,
-  PiDriver,
+  GeminiDriver,
+  GrokDriver,
   OpenAICompatDriver,
   OpenAIResponsesDriver,
-  ClaudeDriver,
-  CodexDriver,
-  AntigravityDriver,
+  GroqDriver,
+  MetaDriver,
   MinimaxDriver,
   MistralDriver,
   CerebrasDriver,
-  GroqDriver,
-  MetaDriver,
-  MuseCodeDriver,
-  DeepSeekAgentDriver,
 ];

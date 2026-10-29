@@ -182,6 +182,14 @@ export function isProxied(req: IncomingMessage): boolean {
   return ipcPeer(req) || Boolean(h["x-forwarded-for"] || h["x-forwarded-proto"] || h["x-forwarded-host"] || h["forwarded"]);
 }
 
+/** True when the direct TCP peer is this machine's loopback: a trusted local proxy such as our own nginx. */
+export function isLocalhostProxy(req: IncomingMessage): boolean {
+  const socket = req.socket;
+  if (!socket) return false;
+  const addr = socket.remoteAddress;
+  return addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1" || addr === "0:0:0:0:0:0:0:1";
+}
+
 /** An IPC listener's only peer is a forwarding gateway, so its requests are remote: never loopback trust. */
 export function ipcPeer(req: IncomingMessage): boolean {
   const socket = req.socket;
