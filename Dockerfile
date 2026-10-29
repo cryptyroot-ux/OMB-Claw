@@ -33,7 +33,7 @@ RUN cp /usr/bin/caddy /caddy
 FROM node:24-bookworm-slim AS build
 WORKDIR /src
 # pinned to package.json#packageManager; corepack is being removed from Node
-RUN npm install -g pnpm@10.33.0
+RUN npm install -g pnpm@10.33.0 && npm install -g rea-agents --allow-scripts=frida
 # The image never runs Electron, so skip its ~100MB postinstall download.
 ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
