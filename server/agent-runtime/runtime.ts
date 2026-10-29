@@ -178,17 +178,31 @@ export function createAgentEngine(dependencies: {
       if (activeByThread.has(request.threadId)) throw new AgentRuntimeError("thread_busy", "A native run is already active for this thread");
 
       const runId = randomUUID();
-      // Wire plugin capabilities: plugins loaded at startup contribute their declared
-      // capabilities alongside the base set. Plugin capabilities are merged into the
-      // capability session so they are discoverable and invocable.
-      const pluginCapabilities = dependencies.plugins
-        ? dependencies.plugins.list().flatMap((p) => p.capabilities.map((c) => ({ id: c, pluginName: p.manifest.name })))
-        : [];
       const runCapabilities = createRunScopedCapabilitySession(request.capabilities, { runId, store: dependencies.store });
-      // Log plugin capabilities for observability and discovery.
-      if (pluginCapabilities.length > 0) {
-        emit(request.threadId, { type: "run.plugins_loaded", runId, plugins: dependencies.plugins!.list().map((p) => p.manifest.name) });
-        emit(request.threadId, { type: "run.plugins_loaded", runId, plugins: pluginCapabilities.map((c) => c.id) });
+
+      // Plugin System: mount plugin capabilities into the capability session.
+      // Plugins declare capabilities (names) and optionally provide handlers.
+      // If the base session supports registration (InMemoryCapabilitySession),
+      // register each plugin capability with its handler.
+      if (dependencies.plugins) {
+        const loaded = dependencies.plugins.list();
+        if (loaded.length > 0) {
+          emit(request.threadId, { type: "run.plugins_loaded", runId, plugins: loaded.map((p) => p.manifest.name) });
+          const pluginCaps = loaded.flatMap((p) => p.capabilities);
+          if (pluginCaps.length > 0) {
+            const session = runCapabilities as { register?: (d: any, h: any) => void };
+            if (typeof session.register === "function" && "getCapabilityHandlers" in dependencies.plugins) {
+              const handlers = (dependencies.plugins as any).getCapabilityHandlers?.();
+              if (handlers) {
+                for (const [name, { handler, pluginName }] of handlers) {
+                  const descriptor = { id: name, name, description: `Plugin capability from ${pluginName}`, schema: { type: "object", properties: {}, additionalProperties: true }, risk: "read" as const, sideEffect: false, timeoutMs: 30_000 };
+                  try { session.register(descriptor, handler); } catch { /* session may not support registration */ }
+                }
+              }
+            }
+            emit(request.threadId, { type: "run.plugins_loaded", runId, plugins: pluginCaps });
+          }
+        }
       }
       const startedAt = Date.now();
       dependencies.store.createRun({

@@ -67,7 +67,7 @@ describe("plugin-loader", () => {
   it("creates plugin registry", () => {
     const registry = createPluginRegistry();
     expect(registry.size()).toBe(0);
-    registry.register({ manifest: { name: "p1", version: "1.0" }, module: {}, capabilities: [], hooks: [] });
+    registry.register({ manifest: { name: "p1", version: "1.0" }, module: {}, capabilities: [], hooks: [], capabilityHandlers: new Map() });
     expect(registry.size()).toBe(1);
     expect(registry.get("p1")).toBeDefined();
     expect(registry.unregister("p1")).toBe(true);
