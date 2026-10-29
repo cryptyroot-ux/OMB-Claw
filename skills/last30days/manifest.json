@@ -1,0 +1,10 @@
+{
+  "id": "last30days",
+  "name": "Last 30 Days Research",
+  "version": "1.0.0",
+  "description": "Research any topic from the last 30 days on Reddit + X + Web, become an expert, and write copy-paste-ready prompts.",
+  "defaultEnabled": true,
+  "alwaysActive": true,
+  "triggerTerms": ["last30days", "research", "trending", "what happened", "latest", "news", "trend"],
+  "requiredCapabilities": []
+}
