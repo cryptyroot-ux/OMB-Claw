@@ -6780,5 +6780,9 @@
   "keys.openPage": "Open API keys",
   "engineSetup.apiKey.inline": "Paste it here. It saves and checks itself, and the models show up here.",
   "settings.intelligence.title": "Intelligence Layer",
-  "settings.intelligence.intro": "Classify tasks, route to the best model, estimate costs, and self-correct."
+  "settings.intelligence.intro": "Classify tasks, route to the best model, estimate costs, and self-correct.",
+  "keys.ollamaCloud.label": "Ollama Cloud API key",
+  "keys.ollamaCloud.desc": "For Ollama Cloud models, billed to your Ollama Cloud account.",
+  "keys.ollamaCloud.link": "Ollama Cloud API keys",
+  "keys.purpose.ollamaCloud": "Ollama Cloud models"
 }

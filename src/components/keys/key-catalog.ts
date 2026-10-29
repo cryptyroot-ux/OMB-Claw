@@ -39,7 +39,7 @@ export interface KeyTarget {
 }
 
 export type KeyId =
-  | "openai" | "anthropic" | "xai" | "openrouter" | "mistral" | "cerebras" | "groq" | "meta" | "deepseek" | "opencodeProviders"
+  | "openai" | "anthropic" | "xai" | "openrouter" | "mistral" | "cerebras" | "groq" | "meta" | "deepseek" | "ollamaCloud" | "opencodeProviders"
   | "lmStudio" | "openaiCompat" | "liveCalls" | "liveKey" | "elevenlabs" | "fishAudio" | "box" | "vps" | "onePassword" | "composio" | "treg"
   | "jev" | "openrouterHelper" | "workersAi" | "imageOpenai" | "imageCustom";
 
@@ -66,7 +66,7 @@ function flag(saved: SavedKey | undefined): SavedState {
   return { configured: saved?.configured === true, ...(saved?.configured && saved.last4 ? { last4: saved.last4 } : {}) };
 }
 
-type TopLevelKey = "openai" | "openrouter" | "xai" | "mistral" | "cerebras" | "groq" | "meta" | "deepseek" | "treg";
+type TopLevelKey = "openai" | "openrouter" | "xai" | "mistral" | "cerebras" | "groq" | "meta" | "deepseek" | "ollamaCloud" | "treg";
 
 function providerKey(name: TopLevelKey, rest: Omit<KeyTarget, "patch" | "saved">): KeyTarget {
   return { patch: (value) => ({ [name]: { key: value } }), saved: (config) => flag(config[name]), ...rest };
@@ -104,6 +104,9 @@ export const KEY_CATALOG: readonly KeyEntry[] = [
   { id: "deepseek", section: "ai", labelKey: "keys.deepseek.label", purposeKey: "keys.purpose.deepseek", name: "DeepSeek", env: ["OMB_DEEPSEEK_API_KEY"],
     words: ["deepseek", "dsh", "harness"], mark: provider("deepseek", "deepseek"), kind: "key",
     target: providerKey("deepseek", { placeholder: "sk-…", href: "https://platform.deepseek.com/api_keys", analytics: "deepseek" }) },
+  { id: "ollamaCloud", section: "ai", labelKey: "keys.ollamaCloud.label", purposeKey: "keys.purpose.ollamaCloud", name: "Ollama Cloud", env: ["OMB_OLLAMA_CLOUD_API_KEY"],
+    words: ["ollama", "cloud", "ollama cloud"], mark: provider("ollamaCloud", "openai"), kind: "key",
+    target: providerKey("ollamaCloud", { placeholder: "ollama_…", href: "https://ollama.com/settings/keys", analytics: "ollama_cloud" }) },
 
   { id: "lmStudio", section: "servers", labelKey: "lmStudio.title", purposeKey: "keys.purpose.lmStudio", name: "LM Studio", env: [],
     words: ["lm studio", "lmstudio", "llm studio", "local", "bionic"], mark: { icon: Server }, kind: "panel" },
@@ -205,7 +208,7 @@ export function looksLikeOtherKey(entry: KeyEntry, value: string): KeyEntry | nu
 
 const INSTANCE_KEYS: Readonly<Record<string, KeyId>> = {
   openai: "openai", claudeApi: "anthropic", xaiApi: "xai", grok: "xai", openrouter: "openrouter", mistral: "mistral", cerebras: "cerebras",
-  groq: "groq", meta: "meta", deepseek: "deepseek", openaiCompat: "openaiCompat",
+  groq: "groq", meta: "meta", deepseek: "deepseek", ollamaCloud: "ollamaCloud", openaiCompat: "openaiCompat",
 };
 
 export function keyForInstance(instanceId: string | undefined): KeyId | undefined {

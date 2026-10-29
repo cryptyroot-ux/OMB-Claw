@@ -15,7 +15,7 @@ export function allow<const T extends string>(value: unknown, list: readonly T[]
 export const KEY_PROVIDER = [
   "anthropic", "openai", "openrouter", "openai_compat", "xai", "mistral", "cerebras", "groq", "meta", "boat", "composio",
   "opencode_go", "custom_endpoint", "elevenlabs", "fish_audio", "jev", "openrouter_decider", "openai_image", "custom_image",
-  "openai_live", "onepassword", "treg", "deepseek",
+  "openai_live", "onepassword", "treg", "deepseek", "ollama_cloud",
 ] as const;
 export type KeyProvider = (typeof KEY_PROVIDER)[number];
 
@@ -30,7 +30,7 @@ export function credentialProvider(target: unknown): KeyProvider | "other" {
 
 export const ENGINE = [
   "openai_compat", "grok",
-  "grok_api", "minimax", "mistral", "cerebras", "groq", "meta",
+  "grok_api", "minimax", "mistral", "cerebras", "groq", "meta", "ollama_cloud",
 ] as const;
 export type Engine = (typeof ENGINE)[number];
 
