@@ -24,6 +24,7 @@ export const API_KEY_FLEET: InstanceConfigMap = {
 
 export const DEFAULT_FLEET: InstanceConfigMap = {
   openaiCompat: { driver: "openai-compat" },
+  ollamaCloud: { driver: "openai-compat", displayName: "Ollama Cloud", config: { url: "https://ollama.com/v1", apiKeyEnv: "OMB_OLLAMA_CLOUD_API_KEY" } },
   mistral: { driver: "mistral" },
   cerebras: { driver: "cerebras" },
   groq: { driver: "groq" },

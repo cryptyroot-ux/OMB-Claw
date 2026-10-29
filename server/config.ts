@@ -1117,6 +1117,9 @@ function injectedEnvironment(cfg: AppConfig, instanceId: string, driver: string)
     if (cfg.openai?.key) environment.set("OMB_OPENAI_API_KEY", cfg.openai.key);
   } else if (driver === "openai-compat" && instanceId === OPENROUTER_API_INSTANCE) {
     if (cfg.openrouter?.key) environment.set("OMB_OPENROUTER_API_KEY", cfg.openrouter.key);
+  } else if (driver === "openai-compat" && instanceId === "ollamaCloud") {
+    if (cfg.ollamaCloud?.key) environment.set("OMB_OLLAMA_CLOUD_API_KEY", cfg.ollamaCloud.key);
+    if (cfg.ollamaCloud?.url) environment.set("OMB_OLLAMA_CLOUD_URL", cfg.ollamaCloud.url);
   } else {
     if (driver === "openai-compat" && cfg.openaiCompat?.key)
       environment.set("OPENAI_COMPAT_API_KEY", cfg.openaiCompat.key);
@@ -1164,7 +1167,10 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
     if (entry.driver === "meta" && cfg.meta?.url && !ownsRouting) {
       entry.config = { ...entry.config as object, url: cfg.meta.url };
     }
-    if (entry.driver === "openai-compat" && cfg.openaiCompat && id !== OPENAI_API_INSTANCE && id !== OPENROUTER_API_INSTANCE) {
+    if (entry.driver === "openai-compat" && id === "ollamaCloud" && cfg.ollamaCloud?.url && !ownsRouting) {
+      entry.config = { ...entry.config as object, url: cfg.ollamaCloud.url };
+    }
+    if (entry.driver === "openai-compat" && cfg.openaiCompat && id !== OPENAI_API_INSTANCE && id !== OPENROUTER_API_INSTANCE && id !== "ollamaCloud") {
       const defaults: Record<string, string> = {};
       if (cfg.openaiCompat.url) defaults.url = cfg.openaiCompat.url;
       if (cfg.openaiCompat.model) defaults.model = cfg.openaiCompat.model;
