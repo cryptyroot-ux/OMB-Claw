@@ -167,4 +167,48 @@ describe("SecretRequestCard key analytics", () => {
     expect(fixture.api.mock.calls[0]).toEqual(["/api/config", { method: "PUT", body: JSON.stringify({ xai: { key: "xai-ZZtestSECRET0123456789" } }) }]);
     expect(fixture.track.mock.calls).toEqual([["api_key_saved", { provider: "xai", via: "chat_request", result: "unverified" }]]);
   });
+
+  // Settings keeps an AI provider key in the server's settings, not the desktop's store: the card does the same.
+  it("saves an Anthropic key where Settings does, never through the desktop store, keeping Claude sign-ins", async () => {
+    const setCredential = vi.fn();
+    vi.stubGlobal("window", { ogb: { setCredential } });
+    fixture.api.mockResolvedValueOnce({ anthropic: { configured: true } }).mockResolvedValueOnce({ ok: true });
+    await submit("anthropicApiKey", "sk-ant-ZZtestSECRET0123456789");
+    expect(setCredential).not.toHaveBeenCalled();
+    expect(fixture.api.mock.calls[0]).toEqual(["/api/config", { method: "PUT", body: JSON.stringify({ anthropic: { key: "sk-ant-ZZtestSECRET0123456789", everyClaudeBot: false } }) }]);
+    expect(fixture.track.mock.calls).toEqual([["api_key_saved", { provider: "anthropic", via: "chat_request", result: "unverified" }]]);
+  });
+
+  it("saves the Composio key in the desktop store's slot, as Settings does", async () => {
+    const setCredential = vi.fn().mockResolvedValue({ composio: { configured: true } });
+    vi.stubGlobal("window", { ogb: { setCredential } });
+    fixture.api.mockResolvedValueOnce({ ok: true });
+    await submit("composioApiKey", "ak_ZZtestSECRET0123456789");
+    expect(setCredential).toHaveBeenCalledExactlyOnceWith("composioApiKey", "ak_ZZtestSECRET0123456789");
+  });
+
+  // A custom secret goes only to its own card's save, which resumes the bot: never Settings, the desktop store or an event.
+  it("keeps a custom secret behind its card, with no product event naming it", async () => {
+    const setCredential = vi.fn();
+    vi.stubGlobal("window", { ogb: { setCredential } });
+    fixture.api.mockResolvedValueOnce({ provided: true, resumed: true });
+    await submit("customSecret", "sk_live_ZZtestSECRET0123456789", { delivery: "ref", helpUrl: "" });
+    expect(setCredential).not.toHaveBeenCalled();
+    expect(fixture.api.mock.calls).toEqual([["/api/bots/bot-1/secret-cards/secret-card/save", {
+      method: "POST", body: JSON.stringify({ threadId: "thread-1", value: "sk_live_ZZtestSECRET0123456789" }),
+    }]]);
+    expect(fixture.track).not.toHaveBeenCalled();
+  });
+});
+
+describe("SecretRequestCard custom secrets", () => {
+  it("says what the bot may do with it, in the bot's words and plainly, with no key link", () => {
+    const file = view({ target: "customSecret", label: "Stripe secret key", reason: "To create test charges.", description: "To create test charges. Scout's commands can read it.", helpUrl: "", delivery: "file" });
+    expect(file).toContain("To create test charges.");
+    expect(file).not.toContain("Scout&#x27;s commands can read it.");
+    expect(file).toContain("Saved to a private file your bot&#x27;s commands can read for 24 hours, then deleted.");
+    expect(file).not.toContain("Where to get this key");
+    const ref = view({ target: "customSecret", label: "Notion key", reason: "For Notion.", helpUrl: "", delivery: "ref" });
+    expect(ref).toContain("MausBot keeps it for one use by its own tools. Your bot never sees it");
+  });
 });
