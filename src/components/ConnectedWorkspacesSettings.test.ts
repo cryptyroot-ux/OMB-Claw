@@ -187,3 +187,10 @@ it("My Cloud's entry has one lending control, Let my bots use this computer; oth
   render().nodes.find(node => node.type === "button" && Children.toArray(node.props.children).join("") === "Let my bots use this computer")!.props.onClick!();
   expect(open).toHaveBeenCalledOnce();
 });
+
+it("shows local environment controls in Simplified Chinese", async () => {
+  stubEnvironments(); setLocale("zh"); await mount();
+  const { html } = render();
+  expect(html).toContain("每个环境都有自己的机器人、会话和数据文件夹");
+  expect(html).not.toContain("Separate setups on this computer");
+});
