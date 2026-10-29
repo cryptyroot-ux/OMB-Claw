@@ -94,6 +94,47 @@ function editTool(ctx: FileToolContext, args: any): FileToolResult {
   return { ok: true, content: `File edited successfully (${occurrences} replacement${occurrences === 1 ? "" : "s"}).` };
 }
 
+
+function multiEditTool(ctx: FileToolContext, args: any): FileToolResult {
+  const edits = Array.isArray(args?.edits) ? args.edits : [];
+  if (edits.length === 0) return { ok: false, content: "No edits provided.", error: "invalid_args" };
+  if (edits.length > 20) return { ok: false, content: "Too many edits (max 20).", error: "too_many_edits" };
+
+  const results: string[] = [];
+  let successCount = 0;
+  let failCount = 0;
+
+  for (const edit of edits) {
+    const filePath = safeResolve(ctx.root, edit?.file_path);
+    if (!filePath) { results.push(`❌ ${edit?.file_path}: path outside workspace`); failCount++; continue; }
+    if (!existsSync(filePath)) { results.push(`❌ ${edit?.file_path}: file not found`); failCount++; continue; }
+    const oldString = String(edit?.old_string ?? "");
+    const newString = String(edit?.new_string ?? "");
+    if (!oldString) { results.push(`❌ ${edit?.file_path}: old_string must not be empty`); failCount++; continue; }
+    const buf = readFileSync(filePath);
+    if (isBinary(buf)) { results.push(`❌ ${edit?.file_path}: binary file`); failCount++; continue; }
+    const text = buf.toString("utf8");
+    const occurrences = text.split(oldString).length - 1;
+    if (occurrences === 0) { results.push(`❌ ${edit?.file_path}: old_string not found`); failCount++; continue; }
+    if (occurrences > 1 && !edit?.replace_all) { results.push(`❌ ${edit?.file_path}: old_string found ${occurrences} times (use replace_all)`); failCount++; continue; }
+    const updated = edit?.replace_all ? text.split(oldString).join(newString) : text.replace(oldString, newString);
+    try {
+      writeFileSync(filePath, updated, "utf8");
+      results.push(`✅ ${edit?.file_path}: ${occurrences} replacement${occurrences === 1 ? "" : "s"}`);
+      successCount++;
+    } catch (err) {
+      results.push(`❌ ${edit?.file_path}: write failed (${err instanceof Error ? err.message : String(err)})`);
+      failCount++;
+    }
+  }
+
+  return {
+    ok: failCount === 0,
+    content: `Multi-edit: ${successCount} succeeded, ${failCount} failed.\n${results.join("\n")}`,
+    error: failCount > 0 ? "partial_failure" : undefined,
+  };
+}
+
 function writeTool(ctx: FileToolContext, args: any): FileToolResult {
   const filePath = safeResolve(ctx.root, args?.file_path);
   if (!filePath) return { ok: false, content: "Path is outside the workspace or invalid.", error: "path_outside_workspace" };
@@ -269,6 +310,7 @@ export function runFileTool(ctx: FileToolContext, name: string, args: Record<str
   switch (name) {
     case "read": return readTool(ctx, args);
     case "edit": return editTool(ctx, args);
+    case "multi_edit": return multiEditTool(ctx, args);
     case "write": return writeTool(ctx, args);
     case "glob": return globTool(ctx, args);
     case "grep": return grepTool(ctx, args);
@@ -280,6 +322,7 @@ export const FILE_TOOL_DESCRIPTORS = [
   { id: "read", name: "read", description: "Read a file's contents with line numbers. Supports offset/limit for large files.", schema: { type: "object", properties: { file_path: { type: "string" }, offset: { type: "integer", minimum: 1 }, limit: { type: "integer", minimum: 1 } }, required: ["file_path"], additionalProperties: false }, risk: "read" as const, sideEffect: false, timeoutMs: 10_000 },
   { id: "edit", name: "edit", description: "Replace exact text in a file. old_string must be unique unless replace_all is true.", schema: { type: "object", properties: { file_path: { type: "string" }, old_string: { type: "string" }, new_string: { type: "string" }, replace_all: { type: "boolean" } }, required: ["file_path", "old_string", "new_string"], additionalProperties: false }, risk: "write" as const, sideEffect: true, timeoutMs: 10_000 },
   { id: "write", name: "write", description: "Create or overwrite a file with the given content.", schema: { type: "object", properties: { file_path: { type: "string" }, content: { type: "string" } }, required: ["file_path", "content"], additionalProperties: false }, risk: "write" as const, sideEffect: true, timeoutMs: 10_000 },
+  { id: "multi_edit", name: "multi_edit", description: "Edit multiple files in one call. Each edit replaces old_string with new_string in the specified file.", schema: { type: "object", properties: { edits: { type: "array", items: { type: "object", properties: { file_path: { type: "string" }, old_string: { type: "string" }, new_string: { type: "string" }, replace_all: { type: "boolean" } }, required: ["file_path", "old_string", "new_string"], additionalProperties: false }, minItems: 1, maxItems: 20 } }, required: ["edits"], additionalProperties: false }, risk: "write" as const, sideEffect: true, timeoutMs: 30_000 },
   { id: "glob", name: "glob", description: "Find files matching a glob pattern, sorted by modification time.", schema: { type: "object", properties: { pattern: { type: "string" }, path: { type: "string" } }, required: ["pattern"], additionalProperties: false }, risk: "read" as const, sideEffect: false, timeoutMs: 10_000 },
   { id: "grep", name: "grep", description: "Search file contents with a regex. Supports context lines and output modes.", schema: { type: "object", properties: { pattern: { type: "string" }, path: { type: "string" }, glob: { type: "string" }, output_mode: { type: "string", enum: ["content", "files_with_matches", "count"] }, context: { type: "integer", minimum: 0 }, head_limit: { type: "integer", minimum: 1 }, case_sensitive: { type: "boolean" } }, required: ["pattern"], additionalProperties: false }, risk: "read" as const, sideEffect: false, timeoutMs: 30_000 },
 ];

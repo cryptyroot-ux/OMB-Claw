@@ -283,6 +283,12 @@ export interface AgentEngine {
   steer(runId: RunId, text: string): Promise<"steered" | "refused">;
   getState(runId: RunId): AgentRunRecord | undefined;
   onEvent(threadId: string, listener: (event: AgentEvent) => void): () => void;
+  /** Optional orchestrator: multi-step task orchestration with swarm support. */
+  readonly orchestrator?: {
+    readonly runPlan: (steps: ReadonlyArray<unknown>, context: unknown) => { planId: string; done: Promise<void> };
+    readonly onEvent: (planId: string, listener: (event: unknown) => void) => () => void;
+    readonly interrupt: (planId: string) => void;
+  };
 }
 
 // ============================================================================

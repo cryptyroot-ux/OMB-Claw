@@ -217,6 +217,6 @@ export async function createNativeChatEngine(options: NativeChatEngineOptions): 
   });
 
   // Attach orchestrator to engine for external access.
-  (engine as any).orchestrator = orchestrator;
+  (engine as { orchestrator?: typeof orchestrator }).orchestrator = orchestrator;
   return engine;
 }

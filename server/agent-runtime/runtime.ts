@@ -217,6 +217,8 @@ export function createAgentEngine(dependencies: {
         let outputVisible = false;
         let capabilityDispatched = false;
         let capabilityFailure = false;
+        let verificationFailure = false;
+        let verificationFeedback = "";
         let completed = false;
         let stopReason: string | null = null;
         let failure: unknown;
@@ -842,6 +844,8 @@ export function createAgentEngine(dependencies: {
                 try {
                   const verification = await dependencies.intelligence.verify(toolOutput);
                   if (!verification.ok) {
+                    verificationFailure = true;
+                    verificationFeedback = verification.feedback || verificationFeedback;
                     dependencies.intelligence.log?.({ kind: "intelligence.verify", detail: JSON.stringify({ ok: verification.ok, feedback: verification.feedback }) });
                     if (verification.feedback) {
                       messages.push({ role: "user", content: `[Intelligence verify: ${verification.feedback}]` });
@@ -862,11 +866,15 @@ export function createAgentEngine(dependencies: {
               continue;
             }
             control.finishing = true;
-            if (capabilityFailure) {
+            const needsCorrection = capabilityFailure || verificationFailure;
+            if (needsCorrection) {
               const maxCorrective = request.toolErrorCorrectiveRounds ?? 0;
               if (correctiveRounds < maxCorrective) {
                 correctiveRounds += 1;
-                messages.push({ role: "assistant", content: responseText || "" }, { role: "user", content: "[OpenMausBot: a tool call in this turn failed (its result is marked ok:false). Re-run the failed operations with corrected inputs where possible, check the results, then give your final answer. Do not report results you did not get.]" });
+                const feedback = verificationFailure && verificationFeedback
+                  ? `[OpenMausBot: verification failed (${verificationFeedback}). Re-run the failed operations with corrected inputs where possible, check the results, then give your final answer. Do not report results you did not get.]`
+                  : "[OpenMausBot: a tool call in this turn failed (its result is marked ok:false). Re-run the failed operations with corrected inputs where possible, check the results, then give your final answer. Do not report results you did not get.]";
+                messages.push({ role: "assistant", content: responseText || "" }, { role: "user", content: feedback });
                 precomputed = null;
                 continue;
               }
