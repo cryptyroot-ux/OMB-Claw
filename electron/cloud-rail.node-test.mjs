@@ -114,8 +114,9 @@ function rail(over = {}) {
     reopenAdd: async () => true, addLink: () => "https://test.checkout.dodopayments.com/x", addDone: () => { w.done = true; }, interest: async () => {} };
   const installed = installCloudRail({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler) }, guard: handler => handler, trusted: () => w.trusted,
     places: () => railPlaces({ saved: saved(), home: HOME, mine: HOME, state: w.state }), open: id => opened.push(id), account: () => account,
-    add: { choices: () => ({ cloud: true, link: true, address: false }), run: choice => ran.push(choice) }, clipboard: { writeText: text => sent.push(text) },
-    openCloud: async id => opened.push(`cloud:${id}`), window: () => ({ isDestroyed: () => false, webContents: { send: (channel) => sent.push(channel) } }), ...over });
+    add: { choices: () => ({ cloud: true, link: true, address: false }), run: (...args) => ran.push(args) }, clipboard: { writeText: text => sent.push(text) },
+    openCloud: async id => opened.push(`cloud:${id}`), targets: () => [{ isDestroyed: () => false, send: (channel) => sent.push(`page:${channel}`) }, null,
+      { isDestroyed: () => false, send: (channel) => sent.push(`rail:${channel}`) }], ...over });
   return { handlers, opened, ran, sent, w, installed, call: (channel, ...args) => handlers.get(channel)({ sender: {} }, ...args) };
 }
 
@@ -131,9 +132,13 @@ test("the rail's channels: the list only for a page main vouches for, a circle o
   assert.throws(() => r.call("workspaces:open", "https://evil.example.test"), /isn't here/);
   assert.throws(() => r.call("workspaces:open", "lab"), /isn't here/, "a local environment is the Server menu's, not the rail's");
   r.call("workspaces:add", "link");
+  r.call("workspaces:add", "link", "  https://bots.example.test/#pair=abc  ");
+  r.call("workspaces:add", "link", { href: "https://evil.example.test" });
+  r.call("workspaces:add", "link", "x".repeat(5000));
   assert.throws(() => r.call("workspaces:add", "address"), /isn't something/, "not offered here");
   assert.throws(() => r.call("workspaces:add", "javascript:alert(1)"), /isn't something/);
-  assert.deepEqual([r.opened, r.ran], [["a"], ["link"]]);
+  assert.deepEqual([r.opened, r.ran], [["a"], [["link"], ["link", "https://bots.example.test/#pair=abc"], ["link"], ["link", "x".repeat(4096)]]],
+    "a pasted link reaches main's own Connect dialog trimmed and bounded; anything but text is the clipboard's");
   r.installed.changed(); r.installed.changed();
   assert.deepEqual(r.sent, ["workspaces:changed"], "a signal only, and once per change");
 });
