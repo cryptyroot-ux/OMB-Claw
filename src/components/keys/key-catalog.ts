@@ -17,7 +17,7 @@ export const KEY_SECTIONS: ReadonlyArray<{ id: KeySectionId; titleKey: LocaleKey
   { id: "helpers", titleKey: "keys.section.helpers", purposeKey: "keys.section.helpers.purpose" },
 ];
 
-export type TestableProvider = "anthropic" | "openai" | "openrouter" | "openaiCompat" | "xai" | "mistral" | "cerebras" | "groq" | "meta" | "treg";
+export type TestableProvider = "anthropic" | "openai" | "openrouter" | "openaiCompat" | "xai" | "mistral" | "cerebras" | "groq" | "meta" | "treg" | "ollamaCloud";
 
 export type DesktopSlot = Parameters<NonNullable<NonNullable<Window["ogb"]>["setCredential"]>>[0];
 
@@ -105,8 +105,8 @@ export const KEY_CATALOG: readonly KeyEntry[] = [
     words: ["deepseek", "dsh", "harness"], mark: provider("deepseek", "deepseek"), kind: "key",
     target: providerKey("deepseek", { placeholder: "sk-…", href: "https://platform.deepseek.com/api_keys", analytics: "deepseek" }) },
   { id: "ollamaCloud", section: "ai", labelKey: "keys.ollamaCloud.label", purposeKey: "keys.purpose.ollamaCloud", name: "Ollama Cloud", env: ["OMB_OLLAMA_CLOUD_API_KEY"],
-    words: ["ollama", "cloud", "ollama cloud"], mark: provider("ollamaCloud", "openai"), kind: "key",
-    target: providerKey("ollamaCloud", { placeholder: "ollama_…", href: "https://ollama.com/settings/keys", analytics: "ollama_cloud" }) },
+    words: ["ollama", "cloud", "ollama cloud"], mark: provider("ollamaCloud"), kind: "key",
+    target: providerKey("ollamaCloud", { placeholder: "ollama_…", href: "https://ollama.com/settings/keys", test: "ollamaCloud", analytics: "ollama_cloud" }) },
 
   { id: "lmStudio", section: "servers", labelKey: "lmStudio.title", purposeKey: "keys.purpose.lmStudio", name: "LM Studio", env: [],
     words: ["lm studio", "lmstudio", "llm studio", "local", "bionic"], mark: { icon: Server }, kind: "panel" },

@@ -23,6 +23,13 @@ export function GrokMark({ size = 16, className }: IconProps) {
   );
 }
 
+
+export function OllamaMark({ size = 16, className }: IconProps) {
+  return (
+    <img src="/ollama-cloud.png" width={size} height={size} alt="Ollama" className={cn("rounded-sm", className)} />
+  );
+}
+
 export function ClaudeMark({ size = 16, className }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 256 257" preserveAspectRatio="xMidYMid" className={cn("fill-[#d97757]", className)}>
@@ -132,6 +139,8 @@ export function ProviderMark({ driverKind, size, className }: IconProps & { driv
     case "grok":
     case "grokAgent":
       return <GrokMark size={size} className={className} />;
+    case "ollamaCloud":
+      return <OllamaMark size={size} className={className} />;
     case "mistral":
       return <PresetProviderMark preset="mistral" size={size} className={className} />;
     case "meta":

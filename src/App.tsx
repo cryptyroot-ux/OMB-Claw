@@ -144,7 +144,18 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
   const noEngines =
     state.connected &&
     state.instances.length > 0 &&
-    !state.instances.some((i) => i.snapshot.state === "available");
+    !state.instances.some((i) => i.snapshot.state === "available") &&
+    !(state.config?.ollamaCloud?.configured) &&
+    !(state.config?.deepseek?.configured) &&
+    !(state.config?.xai?.configured) &&
+    !(state.config?.mistral?.configured) &&
+    !(state.config?.groq?.configured) &&
+    !(state.config?.cerebras?.configured) &&
+    !(state.config?.meta?.configured) &&
+    !(state.config?.anthropic?.configured) &&
+    !(state.config?.openai?.configured) &&
+    !(state.config?.openrouter?.configured) &&
+    !(state.config?.openaiCompat?.configured);
   const cloudSignIn = cloudSignInDue(viewer, state, engineReady);
   const cloudIntent = useCloudIntent();
   const cloudAsk = cloudIntentShown(cloudIntentDue({
