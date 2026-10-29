@@ -489,3 +489,31 @@ test("the menu bar says it is the internet connection when that is all that is l
   indicator.update({ lending: true, internetOnly: false, busy: false });
   assert.equal(trays[0].menu[0].label, "Your bots can use this PC");
 });
+
+test("another Cloud of the person's own that the Admin says is asleep is never dialled, even after its own hold ends, and lends once the Admin says it is awake", async (t) => {
+  const dir = await realpath(await mkdtemp(path.join(tmpdir(), "omb-use-my-mac-")));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const OTHER = "https://omb-c-b.fly.dev";
+  const mine = env, other = { id: "client-b", name: "Client B", origin: OTHER, cloud: { id: "c-b", role: "owner" } };
+  const homes = { [ORIGIN]: cloudHome(), [OTHER]: cloudHome() };
+  const sockets = fakeSockets((url) => { const at = new URL(url.replace(/^wss:/, "https:")); return homes[at.origin].registered.has(at.pathname.split("/")[3]); });
+  // The Admin's word on each Cloud, as the session's Clouds list carries it (`power`): My Cloud awake, Client B asleep.
+  let words = { [ORIGIN]: { state: "awake", since: 1, sleeps: true }, [OTHER]: { state: "asleep", since: 1, sleeps: true } };
+  const power = createCloudPowerGate({ power: () => words[ORIGIN], holdMs: 60_000 });
+  const sharing = createComputerSharing({
+    file: path.join(dir, "profile", "computer-sharing.json"), fetch: (url, init) => homes[new URL(url).origin].fetch(url, init), environments: () => [mine, other],
+    enabled: async () => false, myCloud: () => mine, ownClouds: () => [mine, other], cloud: (place) => ({ status: "connected", accountId: "acct_1", origin: place?.cloud ? place.origin : ORIGIN }),
+    home: path.join(dir, "home"), cuaConnection: async () => null, power, WebSocket: sockets.FakeSocket, linkHeaders: () => ({}),
+    cloudPower: (origin) => words[origin] ?? null,
+  });
+  t.after(() => sharing.close());
+  sharing.start();
+  await until(() => sharing.cloudState(other).problem === "asleep" && sharing.cloudState(mine).link === "on", "My Cloud to lend and Client B to wait");
+  await delay(300);
+  assert.equal(sharing.cloudState(other).enabled, true, "it is lent");
+  assert.deepEqual(homes[OTHER].calls, [], "nothing called the Cloud the Admin says is asleep: any request reaching it wakes it");
+  // The Admin's word changing (a session read) lets it go on.
+  words = { ...words, [OTHER]: { state: "awake", since: 2, sleeps: true } };
+  sharing.cloudChanged();
+  await until(() => sharing.cloudState(other).link === "on" && homes[OTHER].connects.length === 1, "Client B's link to open once the Admin says it is awake");
+});
