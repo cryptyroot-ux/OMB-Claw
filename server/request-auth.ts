@@ -178,16 +178,23 @@ export function requestOrigin(req: IncomingMessage): string | null {
 
 /** A proxy that hands the server a loopback Host must not turn a remote client into the owner. */
 export function isProxied(req: IncomingMessage): boolean {
+  // Connections from our own local reverse proxy (socket 127.0.0.1/::1) are trusted: not a remote proxy.
+  const socket = req.socket;
+  if (socket && isLocalhostAddress(socket.remoteAddress)) return false;
   const h = req.headers;
   return ipcPeer(req) || Boolean(h["x-forwarded-for"] || h["x-forwarded-proto"] || h["x-forwarded-host"] || h["forwarded"]);
+}
+
+/** True when the direct TCP peer is this machine's loopback (e.g. our own nginx on 127.0.0.1). */
+function isLocalhostAddress(addr: string | undefined): boolean {
+  if (!addr) return false;
+  return addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1" || addr === "0:0:0:0:0:0:0:1";
 }
 
 /** True when the direct TCP peer is this machine's loopback: a trusted local proxy such as our own nginx. */
 export function isLocalhostProxy(req: IncomingMessage): boolean {
   const socket = req.socket;
-  if (!socket) return false;
-  const addr = socket.remoteAddress;
-  return addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1" || addr === "0:0:0:0:0:0:0:1";
+  return Boolean(socket) && isLocalhostAddress(socket.remoteAddress);
 }
 
 /** An IPC listener's only peer is a forwarding gateway, so its requests are remote: never loopback trust. */
@@ -557,8 +564,10 @@ export function resolveRequestAuth(req: IncomingMessage, options: ResolveOptions
   }
 
   const proxied = isProxied(req);
-  const loopback = !proxied && isLoopbackHost(headerValue(req.headers.host)) && isAllowedOrigin(headerValue(req.headers.origin));
-  if (loopback) {
+  // A request from our own local reverse proxy (nginx on 127.0.0.1) is trusted: treat as loopback owner.
+  const trustedLocalProxy = isLocalhostProxy(req);
+  const loopback = (trustedLocalProxy || (!proxied && isLoopbackHost(headerValue(req.headers.host)))) && (trustedLocalProxy || isAllowedOrigin(headerValue(req.headers.origin)));
+  if (loopback || trustedLocalProxy) {
     const companionToken = headerValue(req.headers["x-openmausbot-companion-auth"]);
     if (companionToken && options.loopbackMutationToken !== undefined) {
       if (
@@ -591,10 +600,10 @@ export function resolveRequestAuth(req: IncomingMessage, options: ResolveOptions
     return { auth: { kind: "loopback", scopes: LOOPBACK_SCOPES }, status: 401, error: "" };
   }
 
-  if (proxied) {
+  if (proxied && !trustedLocalProxy) {
     return deny(403, "forbidden: this request came through a proxy (pair this device to use the server remotely)");
   }
-  if (!isLoopbackHost(headerValue(req.headers.host))) {
+  if (!isLoopbackHost(headerValue(req.headers.host)) && !trustedLocalProxy) {
     return deny(403, "forbidden: loopback host required (pair this device to use the server remotely)");
   }
   return deny(403, "forbidden: cross-origin request");
