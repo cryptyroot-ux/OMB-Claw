@@ -6,6 +6,13 @@ import type { StepExecutionOutcome, ExecutionResult, StepExecutionStatus } from 
 
 export type ToolRunner = (step: PlanStep) => Promise<unknown>;
 
+export interface ExecutorStreamChunk {
+  readonly phase: "execute" | "verify";
+  readonly stepId: string;
+  readonly delta?: string;
+  readonly result?: ExecutionResult;
+}
+
 type VerifierLike = { verify: (step: PlanStep, threadId?: string) => Promise<VerificationResult> };
 
 function resolveVerifier(candidate: unknown, fallback?: unknown): VerifierLike | undefined {
@@ -42,6 +49,115 @@ export class Executor {
   ) {
     this.toolRunner = toolRunner;
     this.verifier = resolveVerifier(verifierOrOptions, options);
+  }
+
+  async *executeStream(plan: Plan): AsyncGenerator<ExecutorStreamChunk, ExecutionResult> {
+    plan.status = "executing";
+
+    const originalIndex = new Map(plan.steps.map((step, index) => [step.id, index]));
+    const sorted = this.topologicalSort(plan.steps);
+
+    const status = new Map<string, StepExecutionStatus>();
+    const outcomes: StepExecutionOutcome[] = [];
+
+    let completedSteps = 0;
+    let failedSteps = 0;
+    let skippedSteps = 0;
+
+    for (const step of sorted) {
+      const dependencies = Array.isArray(step.dependencies) ? step.dependencies : [];
+      const unmet = dependencies.some((dep) => status.get(dep) !== "completed");
+
+      if (unmet) {
+        status.set(step.id, "skipped");
+        skippedSteps += 1;
+        outcomes.push(this.makeOutcome(step, "skipped", undefined, undefined, "unmet dependencies"));
+        continue;
+      }
+
+      let toolResult: unknown;
+      let failed = false;
+      let error: string | undefined;
+
+      try {
+        const runnerResult = this.toolRunner(step);
+        if (runnerResult && typeof runnerResult === "object" && Symbol.asyncIterator in runnerResult) {
+          for await (const chunk of runnerResult as unknown as AsyncGenerator<{ delta?: string; [key: string]: any }>) {
+            if (chunk.delta) {
+              yield { phase: "execute", stepId: step.id, delta: chunk.delta } as ExecutorStreamChunk;
+            }
+          }
+          toolResult = { ok: true };
+        } else {
+          toolResult = await runnerResult;
+        }
+        if (!this.isSuccess(toolResult)) {
+          failed = true;
+          error = this.extractError(toolResult);
+        }
+      } catch (err) {
+        failed = true;
+        toolResult = undefined;
+        error = err instanceof Error ? err.message : String(err);
+      }
+
+      step.result = toolResult;
+
+      if (failed) {
+        status.set(step.id, "failed");
+        failedSteps += 1;
+        outcomes.push(this.makeOutcome(step, "failed", toolResult, undefined, error));
+        continue;
+      }
+
+      let verification: VerificationResult | undefined;
+      if (this.verifier) {
+        try {
+          verification = await this.verifier.verify(step, "");
+        } catch {
+          verification = { verified: false, evidence: "", confidence: 0 };
+        }
+        step.verified = verification.verified;
+        if (!verification.verified) {
+          failed = true;
+        }
+      }
+
+      if (failed) {
+        status.set(step.id, "failed");
+        failedSteps += 1;
+        outcomes.push(this.makeOutcome(step, "failed", toolResult, verification, "verification failed"));
+        continue;
+      }
+
+      status.set(step.id, "completed");
+      completedSteps += 1;
+      outcomes.push(this.makeOutcome(step, "completed", toolResult, verification));
+    }
+
+    outcomes.sort((a, b) => (originalIndex.get(a.stepId) ?? 0) - (originalIndex.get(b.stepId) ?? 0));
+
+    plan.status = failedSteps > 0 ? "failed" : "completed";
+
+    const success = failedSteps === 0 && skippedSteps === 0;
+
+    const result: ExecutionResult = {
+      planId: plan.id,
+      threadId: plan.threadId,
+      completedSteps,
+      failedSteps,
+      skippedSteps,
+      totalSteps: plan.steps.length,
+      success,
+      ok: success,
+      outcomes,
+      stepResults: outcomes,
+      results: outcomes,
+      steps: outcomes,
+    };
+
+    yield { phase: "execute", stepId: "", result } as ExecutorStreamChunk;
+    return result;
   }
 
   async execute(plan: Plan): Promise<ExecutionResult> {

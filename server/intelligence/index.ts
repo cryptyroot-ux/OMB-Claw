@@ -12,4 +12,5 @@ export type { ExecutionResult, StepExecutionOutcome, StepExecutionStatus } from 
 
 export { IntelligenceLayer } from "./intelligence-layer.ts";
 export { isIntelligenceEnabled } from "./feature-flag.ts";
-export type { IntelligenceLayerDeps, IntelligenceLayerResult } from "./intelligence-layer.ts";
+export type { IntelligenceLayerDeps, IntelligenceLayerResult, IntelligenceLayerStreamChunk } from "./intelligence-layer.ts";
+export type { ExecutorStreamChunk } from "./executor.ts";

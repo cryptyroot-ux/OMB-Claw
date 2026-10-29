@@ -26,6 +26,12 @@ export interface IntelligenceLayerResult {
   cost: number;
 }
 
+export interface IntelligenceLayerStreamChunk {
+  readonly phase: "classify" | "route" | "plan" | "execute" | "verify" | "done";
+  readonly data?: unknown;
+  readonly delta?: string;
+}
+
 export interface IntelligenceLayerDeps {
   modelCaller?: (prompt: string) => Promise<string>;
   model?: (prompt: string) => Promise<string>;
@@ -222,20 +228,26 @@ export class IntelligenceLayer {
     }
   }
 
-  async process(brief: string, threadId: string = this.deps.threadId ?? ""): Promise<IntelligenceLayerResult> {
+  async *runPipeline(
+    brief: string,
+    threadId: string,
+  ): AsyncGenerator<IntelligenceLayerStreamChunk, IntelligenceLayerResult> {
     const tid = threadId || "";
-    // Feature flag gate: when a config is supplied and the layer is disabled, skip.
+    // Feature flag gate
     if (this.deps.config != null && !isIntelligenceEnabled(this.deps.config as ConfigStatus | null | undefined)) {
       if (tid) appendNative(tid, { dir: "out", source: "feature-flag", msg: { enabled: false } });
-      return { completed: false, stepsCompleted: 0, stepsFailed: 0, error: "intelligence layer disabled", cost: 0 };
+      const r: IntelligenceLayerResult = { completed: false, stepsCompleted: 0, stepsFailed: 0, error: "intelligence layer disabled", cost: 0 };
+      yield { phase: "done", data: r } as IntelligenceLayerStreamChunk;
+      return r;
     }
     let cost = 0;
-    let assignment: ReturnType<ModelRouter["select"]> | undefined;
+    let assignment: any = undefined;
 
     try {
       // 1. classify
       const taskType = this.classifier(brief);
       if (tid) appendNative(tid, { dir: "out", source: "classifier", msg: { taskType } });
+      yield { phase: "classify", data: { taskType } } as IntelligenceLayerStreamChunk;
 
       // 2. route
       if (this.modelRouter) {
@@ -248,17 +260,18 @@ export class IntelligenceLayer {
             msg: { model: assignment?.primary?.model, fallbacks: assignment?.fallbacks },
           });
 
-          // Budget check before model call
           const allowed = this.budgetGuard.check(assignment, tid);
           if (!allowed) {
-            return { completed: false, stepsCompleted: 0, stepsFailed: 0, error: "budget exceeded", cost };
+            const r: IntelligenceLayerResult = { completed: false, stepsCompleted: 0, stepsFailed: 0, error: "budget exceeded", cost };
+            yield { phase: "done", data: r } as IntelligenceLayerStreamChunk;
+            return r;
           }
           this.budgetGuard.record(assignment, tid);
         } catch (err) {
-          // routing failure is non-fatal for planner if planner has no router
           if (tid) appendNative(tid, { dir: "out", source: "router", msg: { error: String(err) } });
         }
       }
+      yield { phase: "route", data: { model: assignment?.primary?.model } } as IntelligenceLayerStreamChunk;
 
       // 3. plan
       if (!this.planner) {
@@ -266,19 +279,34 @@ export class IntelligenceLayer {
       }
       const plan: Plan = await this.planner.plan(brief, taskType, tid);
       if (tid) appendNative(tid, { dir: "out", source: "planner", msg: { planId: plan.id, steps: plan.steps.length } });
+      yield { phase: "plan", data: { planId: plan.id, steps: plan.steps.length } } as IntelligenceLayerStreamChunk;
 
       if (!this.executor) {
         throw new Error("No executor available");
       }
-
-      // Ensure executor has verifier
       if (this.verifier && this.toolRunner) {
-        // Rebuild executor with verifier if the current one lacks one
         this.executor = new Executor(this.toolRunner, this.verifier);
       }
 
-      // 4. execute
-      const execResult: ExecutionResult = await this.executor.execute(plan);
+      // 4. execute - use streaming executor
+      let execResult: ExecutionResult | undefined;
+      if (typeof (this.executor as any).executeStream === "function") {
+        const execGen = (this.executor as any).executeStream(plan);
+        for await (const chunk of execGen) {
+          if (chunk.delta) {
+            yield { phase: "execute", delta: chunk.delta, data: { stepId: chunk.stepId } } as IntelligenceLayerStreamChunk;
+          }
+          if (chunk.result) {
+            execResult = chunk.result;
+          }
+        }
+      } else {
+        execResult = await this.executor.execute(plan);
+      }
+      if (!execResult) {
+        throw new Error("Executor did not return a result");
+      }
+      yield { phase: "execute", data: { completedSteps: execResult.completedSteps ?? 0, failedSteps: execResult.failedSteps ?? 0 } } as IntelligenceLayerStreamChunk;
 
       // 5. verification logging
       for (const outcome of execResult.outcomes ?? execResult.steps ?? []) {
@@ -295,8 +323,8 @@ export class IntelligenceLayer {
           });
         }
       }
+      yield { phase: "verify", data: {} } as IntelligenceLayerStreamChunk;
 
-      // cost from plan metadata
       const planCost = typeof plan.metadata?.estimatedCost === "number" ? plan.metadata.estimatedCost : 0;
       if (planCost > 0) cost = planCost;
 
@@ -320,23 +348,53 @@ export class IntelligenceLayer {
         error = (firstFailed as any)?.error ?? "execution failed";
       }
 
-      return {
+      const r: IntelligenceLayerResult = {
         completed: success,
         stepsCompleted: completedSteps,
         stepsFailed: failed,
         error,
         cost,
       };
+      yield { phase: "done", data: r } as IntelligenceLayerStreamChunk;
+      return r;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      // If plan parsing failed, message from Planner is "Invalid plan"
-      return {
+      const r: IntelligenceLayerResult = {
         completed: false,
         stepsCompleted: 0,
         stepsFailed: 0,
         error: message,
         cost,
       };
+      yield { phase: "done", data: r } as IntelligenceLayerStreamChunk;
+      return r;
+    }
+  }
+
+  async process(brief: string, threadId: string = this.deps.threadId ?? ""): Promise<IntelligenceLayerResult> {
+    const gen = this.runPipeline(brief, threadId);
+    let r: IntelligenceLayerResult | undefined;
+    while (true) {
+      const { value, done } = await gen.next();
+      if (done) {
+        r = value as IntelligenceLayerResult;
+        break;
+      }
+    }
+    return r!;
+  }
+
+  // Streaming entry: runs process() and yields a single terminal chunk with the
+  // full result. True per-phase streaming is pending (Phase 4 follow-up).
+  async *processStream(
+    brief: string,
+    threadId: string = this.deps.threadId ?? "",
+  ): AsyncGenerator<IntelligenceLayerStreamChunk> {
+    const gen = this.runPipeline(brief, threadId);
+    while (true) {
+      const { value, done } = await gen.next();
+      yield value as IntelligenceLayerStreamChunk;
+      if (done) break;
     }
   }
 }
