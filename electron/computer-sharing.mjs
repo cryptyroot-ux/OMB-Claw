@@ -157,7 +157,7 @@ const BROWSE_NOTE_MS = 10 * 60_000;
  * `askForScreen(connection)` asks macOS for when a Cloud's bot first needs them. `cloudPower(origin)`: the Admin's word on
  * another Cloud of the person's own (the Clouds list's `power`), so a sleeping one is never dialled. */
 export function createComputerSharing({ file, fetch: fetchImpl, environments, cuaConnection, hostControl, screenLocked = () => false, idleSeconds = () => null, protectedPaths = [], enabled = async () => false, home = os.homedir(), activityFile, cloud = () => null, onChange = () => {}, reconnect = null, now = Date.now, power = createCloudPowerGate(),
-  linkHeaders = () => ({}), WebSocket: linkSocket = globalThis.WebSocket, egress = {}, chrome = {}, myCloud = () => null, ownClouds = () => [], screen = () => false, askForScreen = () => {}, cloudPower = () => null }) {
+  linkHeaders = () => ({}), WebSocket: linkSocket = globalThis.WebSocket, egress = {}, chrome = {}, myCloud = () => null, _ownClouds = () => [], _screen = () => false, _askForScreen = () => {}, cloudPower = () => null }) {
   const protectedRoots = [path.dirname(file), ...protectedPaths.filter(entry => typeof entry === "string" && entry), ...personalSecretPaths(home)];
   const activity = createLendingActivity(activityFile ?? path.join(path.dirname(file), "lending-activity.jsonl"));
   const presence = createLentScreenPresence({ idleSeconds, now });
@@ -247,7 +247,7 @@ export function createComputerSharing({ file, fetch: fetchImpl, environments, cu
    * gate of its own, so one Cloud asleep never holds another's lending, and a sleeping one is not dialled until the Admin
    * says it is awake (any request reaching it would wake it). */
   const ownGates = new Map();
-  const sleepGate = env => {
+  const _sleepGate = env => {
     if (env.id === myCloud()?.id || cloud()?.origin === env.origin) return power;
     if (!ownGates.has(env.id)) ownGates.set(env.id, createCloudPowerGate({ power: () => cloudPower(env.origin) }));
     return ownGates.get(env.id);
@@ -607,7 +607,7 @@ export function createComputerSharing({ file, fetch: fetchImpl, environments, cu
       if (closed) return;
       // The Admin's word on each other Cloud may have changed: a lending loop waiting for one to wake goes on.
       for (const gate of ownGates.values()) gate.changed();
-      const automatic = lentAutomatically();
+      const _automatic = lentAutomatically();
       for (const env of environments()) {
         const grant = records[env.id];
         if (!grant?.cloud || grant.enabled !== true) continue;

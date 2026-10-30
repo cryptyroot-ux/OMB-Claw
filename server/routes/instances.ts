@@ -42,6 +42,7 @@ export function createInstanceRoutes(deps: InstanceRouteDeps): RouteHandler {
     cli: z.string().max(4096).optional(),
     tools: z.boolean().optional(),
     displayName: z.string().trim().min(1).max(80).optional(),
+    replyWaitMinutes: z.number().int().min(1).max(60).nullable().optional(),
   }).strict().refine((value) => Object.keys(value).length > 0, "No settings supplied");
   const {
     store, cfg, registry, sessions, providerAuthSessions, hostedModels, providerConfigBusy, providerInstancesChanging,

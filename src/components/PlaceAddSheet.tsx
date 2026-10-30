@@ -2,7 +2,7 @@
 // one), buy a Cloud (the buying sheet: another Cloud right here, or the first one on this computer's own sheet), or add a
 // server of the person's own by pasting its pairing link.
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { Building2, Cloud, Loader2, Server, X } from "lucide-react";
+import { Cloud, Loader2, Server, X } from "lucide-react";
 import type { RailAddChoices } from "../../electron/cloud-rail.mjs";
 import { track } from "@/lib/analytics";
 import { cn } from "@/lib/cn";
@@ -89,9 +89,9 @@ export function RailSheet({ wide = false, focusKey, onClose, children }: { wide?
 }
 
 export function PlaceAddSheet({ choices, connect = null, onClose }: { choices: RailAddChoices; connect?: { name: string } | null; onClose: () => void }) {
-  const server = choices.link, organization = choices.organization === true;
-  const several = [organization, choices.cloud, server].filter(Boolean).length > 1;
-  const [view, setView] = useState<"choose" | "cloud" | "server" | "organization">(connect ? "server" : several ? "choose" : organization ? "organization" : choices.cloud ? "cloud" : "server");
+  const server = choices.link;
+  const several = [choices.cloud, server].filter(Boolean).length > 1;
+  const [view, setView] = useState<"choose" | "cloud" | "server">(connect ? "server" : several ? "choose" : choices.cloud ? "cloud" : "server");
   const [wide, setWide] = useState(false);
   const workspaces = window.ogb?.workspaces;
   const firstCloud = () => {
@@ -109,6 +109,5 @@ export function PlaceAddSheet({ choices, connect = null, onClose }: { choices: R
     </div>}
     {view === "server" && <OwnServerLink onBack={several && !connect ? () => setView("choose") : null} onConnected={onClose} connect={connect} />}
     {view === "cloud" && <AddCloudFlow onClose={onClose} onFirstCloud={firstCloud} onWide={setWide} onBack={several ? () => setView("choose") : null} />}
-    {view === "organization" && <NewOrganization onClose={onClose} onBack={several ? () => setView("choose") : null} />}
   </RailSheet>;
 }

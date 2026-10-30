@@ -29,7 +29,7 @@ export interface RailPlace {
   update?: { version: string; latest: string };
 }
 /** ＋'s choices here: buying a Cloud, pasting a server's pairing link, typing its address on this computer's Settings. */
-export interface RailAddChoices { cloud: boolean; link: boolean; address: boolean }
+export interface RailAddChoices { cloud: boolean; link: boolean; address: boolean; organization?: boolean }
 export interface RailState { places: RailPlace[]; add: RailAddChoices }
 /** Buying another Cloud as a page sees it: what the sheet says, never the account, an address or the checkout page. */
 export type AddCloudView =
