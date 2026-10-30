@@ -5,7 +5,7 @@ import { DESKTOP_PORTS } from "../../electron/desktop-ports.mjs";
 import { appVersion } from "@/lib/app-links";
 import { readAdvancedMode } from "@/lib/interface-mode";
 
-const TOKEN = "phc_m2hP39w8y2gLPvHgDvSXAu6xcZ3agjf4ruL56rGcMZEe";
+const posthogToken = (): string => (import.meta.env?.VITE_POSTHOG_TOKEN as string | undefined) ?? "";
 
 // Read before init(): an opted-out install must never call posthog.init(), so no request leaves the machine.
 const OPT_OUT_KEY = "omb-analytics-opt-out";
@@ -27,6 +27,7 @@ let pending: Array<(ph: PostHog) => void> = [];
 let choice: boolean | undefined;
 
 export function analyticsEnabled(): boolean {
+  if (!posthogToken()) return false;
   if (choice !== undefined) return choice;
   const desktop = desktopSwitch()?.enabled();
   if (typeof desktop === "boolean") return desktop;
@@ -96,7 +97,7 @@ function start(posthog: PostHog) {
     pending = [];
     return;
   }
-  posthog.init(TOKEN, {
+  posthog.init(posthogToken(), {
     api_host: "https://us.i.posthog.com",
     autocapture: false, // never capture clicked-element text (conversation leak)
     capture_pageview: false,
