@@ -33,6 +33,7 @@ function fakeSession(overrides: Partial<ChatToolSession> = {}): ChatToolSession 
   return {
     definitions: [definition("read_file"), definition("write_file")],
     skipped: [],
+    trimmed: [],
     validate: vi.fn(),
     view: (name) => ({ title: name, input: { value: "fixture" }, ask: name === "write_file" }),
     execute: async (name) => {

@@ -109,7 +109,7 @@ try {
     const profile = mkdtempSync(join(tmpdir(), "omb-rail-chrome-"));
     const chrome = await openChrome(profile);
     try {
-      let banner = false;
+      let _banner = false;
       const spots = new Map<string, Array<{ view: string; at: { left: number; top: number } | null }>>();
       for (const view of VIEWS.filter((entry) => !only || only.has(entry.name))) for (const skin of SKINS) {
         const file = join(shots, `${view.name}-${skin.look}.png`);
