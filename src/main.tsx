@@ -26,8 +26,7 @@ async function chooseRoot(): Promise<React.ReactNode> {
   // The window's own rail of places (electron/chrome-rail.mjs): see-through but for the rail and its open sheets.
   if (location.pathname === "/rail" && window.ogb?.rail?.expand) {
     document.documentElement.style.background = document.body.style.background = "transparent";
-    const { ChromeRail } = await import("./components/ChromeRail");
-    return <ChromeRail />;
+    return null;
   }
   if (location.pathname === "/pair") {
     const signIn = takeBrowserSignInFromLocation();
