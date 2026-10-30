@@ -194,6 +194,8 @@ export interface SendTurnInput {
   mcpCallTimeoutMs?: number;
   /** Times an API-model turn that answers after a failed tool call is sent back to re-run it (`loopGuard.correctiveRounds`); never after a denial. */
   toolErrorCorrectiveRounds?: number;
+  /** Extra workspace roots for native workspace tools. */
+  workspaceTools?: { readRoots?: string[]; writeRoots?: string[]; unrestricted?: boolean };
 }
 
 /** An MCP server this machine starts and talks to over stdio. */

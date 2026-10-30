@@ -3,10 +3,58 @@
 import type { ProviderErrorCode } from "../contracts.ts";
 import { isProviderSafetyBlock } from "../../shared/provider-safety.ts";
 
-export const RETRY_MAX_ATTEMPTS = 3;
+export const RETRY_MAX_ATTEMPTS = 4;
 
-/** Backoff schedule before attempt N (N is 1-based over retries): 1s / 3s / 8s. */
-export const BACKOFF_BASE_MS = [1_000, 3_000, 8_000] as const;
+/** Backoff schedule before retry N (0-based): 1s / 3s / 8s / 8s, each ±25% jitter. */
+export const BACKOFF_BASE_MS = [1_000, 3_000, 8_000, 8_000] as const;
+
+/** A provider's Retry-After is honored up to this long. */
+export const RETRY_AFTER_CAP_MS = 30_000;
+
+/** All retry waits in one request together never exceed this. */
+export const RETRY_TOTAL_WAIT_CAP_MS = 45_000;
+
+/** Statuses a native API driver retries; any other non-2xx surfaces at once. */
+export const RETRYABLE_STATUSES: ReadonlySet<number> = new Set([429, 500, 502, 503, 504]);
+
+/** A non-2xx HTTP answer from a provider, carrying its status and any Retry-After delay. */
+export class HttpStatusError extends Error {
+  readonly status: number;
+  readonly retryAfterMs?: number;
+  constructor(message: string, status: number, retryAfterMs?: number) {
+    super(message);
+    this.status = status;
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+/** Retry-After as delta-seconds or an HTTP-date, in ms, capped; undefined when absent or unparseable. */
+export function parseRetryAfter(value: string | null | undefined, now: number = Date.now()): number | undefined {
+  if (!value) return undefined;
+  const text = value.trim();
+  let ms: number;
+  if (/^\d+(?:\.\d+)?$/.test(text)) ms = Number(text) * 1_000;
+  else {
+    const at = Date.parse(text);
+    if (Number.isNaN(at)) return undefined;
+    ms = at - now;
+  }
+  return Math.min(Math.max(0, Math.round(ms)), RETRY_AFTER_CAP_MS);
+}
+
+/** The wait before retry `attempt` (0-based), or null when the attempt or total-wait budget is spent. */
+export function nextRetryDelay(
+  attempt: number,
+  waitedMs: number,
+  retryAfterMs?: number,
+  random: () => number = Math.random,
+): number | null {
+  if (attempt >= RETRY_MAX_ATTEMPTS - 1) return null;
+  const delay = retryAfterMs ?? computeBackoff(attempt, random);
+  const left = RETRY_TOTAL_WAIT_CAP_MS - waitedMs;
+  if (left <= 0) return null;
+  return Math.min(delay, left);
+}
 
 export type TransientReason =
   | "rate_limited"
@@ -87,6 +135,18 @@ const messageOf = (err: FailureInput): string => {
  * failure. A signal kill (negative code) is never retried. */
 export function classifyError(err: FailureInput): ErrorClassification {
   const text = messageOf(err);
+  if (err instanceof HttpStatusError && !isProviderSafetyBlock(text)) {
+    // A 429 that says the quota or usage ran out is terminal; any other 429 is a rate limit.
+    if (err.status === 429) {
+      return USAGE_LIMIT.test(text) || /\bquota\b|\bbilling\b/i.test(text)
+        ? { transient: false, reason: "quota" }
+        : { transient: true, reason: "rate_limited" };
+    }
+    if (RETRYABLE_STATUSES.has(err.status)) return { transient: true, reason: "server_error" };
+    if (err.status === 401 || err.status === 403) return { transient: false, reason: "auth" };
+    if (err.status === 404) return { transient: false, reason: "not_found" };
+    if (err.status === 400 || err.status === 422) return { transient: false, reason: "invalid_request" };
+  }
   // A surrounding HTTP 5xx/429 must not replay a provider safety block.
   if (isProviderSafetyBlock(text)) return { transient: false, reason: "provider_safety" };
   if (err && "exitCode" in err) {

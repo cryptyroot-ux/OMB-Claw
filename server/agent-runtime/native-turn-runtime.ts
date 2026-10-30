@@ -14,6 +14,7 @@ import { allowsTool, parseToolScope } from "../../shared/tool-scope.ts";
 import { redactSecretsInText } from "../redact.ts";
 import { toolDetailPreview } from "../tool-summary.ts";
 import { ChatToolSessionError, mountChatTools, type ChatToolDefinition, type ChatToolSession, type ChatToolResult } from "../drivers/chat-mcp-tools.ts";
+import { executeWorkspaceTool, skillReadRoots, validateWorkspaceArgs, WORKSPACE_TOOL_DEFINITIONS, WORKSPACE_TOOLS_PROMPT, workspaceToolView, type WorkspaceToolsConfig } from "../drivers/workspace-tools.ts";
 import { assertImageTransport, chatImageBudget, chatToolImages, chatUserContent, type ChatContentPart } from "../drivers/chat-images.ts";
 import { promptHalves, volatileContextNote, withContextNote } from "../drivers/prompt-split.ts";
 import { createChatToolApproval, refusal } from "../drivers/chat-tool-approval.ts";
@@ -646,6 +647,28 @@ export function createNativeTurnRuntime<Config>(options: RuntimeOptions<Config>)
         for (const { server, reason } of tools.skipped) {
           emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message: `MCP server "${server}" was skipped for this turn: ${safeText(reason)}` });
         }
+        // Native workspace tools: in-process, rooted at the turn's folder.
+        const workspace: WorkspaceToolsConfig | undefined = options.tools !== false && turn.cwd && !turn.guestConfined ? {
+          root: turn.cwd,
+          readRoots: [...(turn.workspaceTools?.readRoots ?? []), ...skillReadRoots(turn.system, turn.systemStable, turn.text)],
+          writeRoots: turn.workspaceTools?.writeRoots,
+          unrestricted: turn.workspaceTools?.unrestricted === true || process.env.OMB_WORKSPACE_UNRESTRICTED === "1",
+        } : undefined;
+        const workspaceNames = new Set<string>();
+        if (workspace) {
+          const taken = new Set(tools.definitions.map((definition) => definition.function.name));
+          for (const definition of WORKSPACE_TOOL_DEFINITIONS) {
+            const name = definition.function.name;
+            if (taken.has(name) || !allowsTool(scope, { kind: "native", name })) continue;
+            tools.definitions.push(definition);
+            workspaceNames.add(name);
+          }
+          if (workspaceNames.size) {
+            const head = messages[0];
+            if (head?.role === "system" && typeof head.content === "string") head.content += WORKSPACE_TOOLS_PROMPT;
+            else messages.unshift({ role: "system", content: WORKSPACE_TOOLS_PROMPT.trimStart() });
+          }
+        }
         const questionAllowed = options.tools !== false && allowsTool(scope, { kind: "native", name: ASK_USER_TOOL });
         let optionalQuestionOnly = questionAllowed && tools.definitions.length === 0;
           // An MCP server squatting ask_user cannot shadow it (dispatch intercepts the name); skip its definition.
@@ -826,6 +849,24 @@ export function createNativeTurnRuntime<Config>(options: RuntimeOptions<Config>)
                   } else {
                     result = { ok: true, text: answer };
                   }
+                }
+              } else if (workspace && workspaceNames.has(call.function.name)) {
+                validateWorkspaceArgs(call.function.name, args as Record<string, unknown>);
+                const shown = workspaceToolView(call.function.name, args as Record<string, unknown>);
+                const shownPreview = shown.input === args ? inputPreview : preview(shown.input);
+                const floored = approval.floored({ full: turn.approvalMode === "full", threadId: turn.threadId, botId: turn.botId, shown, summary: shownPreview });
+                const allowed = !floored && (turn.approvalMode === "full" || !shown.ask
+                  || await approval.ask(shown.title, shownPreview ?? "This tool has no arguments.", shown.grant));
+                abort.signal.throwIfAborted();
+                emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id,
+                  title: shown.title, ...(shownPreview ? { input: shownPreview } : {}),
+                });
+                started = true;
+                if (allowed) {
+                  result = await executeWorkspaceTool(call.function.name, args as Record<string, unknown>, workspace, abort.signal);
+                } else {
+                  denials.push(shown.title);
+                  result = { ok: false, text: refusal(floored, (message) => emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message })) };
                 }
               } else {
                 tools.validate(call.function.name, args);
