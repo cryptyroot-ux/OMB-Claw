@@ -120,7 +120,7 @@ export interface ConnectorCardData {
 }
 
 export interface SecretRequestCardData {
-  target: import("../../shared/credential-request").CredentialTargetId;
+  target: import("../../shared/credential-request").CredentialTargetId | "customSecret";
   label: string;
   description: string;
   placeholder: string;
@@ -132,6 +132,8 @@ export interface SecretRequestCardData {
   resumed?: boolean;
   error?: string;
   stopped?: boolean;
+  reason?: string;
+  delivery?: import("../../shared/credential-request").SecretDelivery;
 }
 
 export type ComputerControlState = { held: boolean; helpReason: string | null; help?: import("../../shared/wire").ComputerHelpRef | null };

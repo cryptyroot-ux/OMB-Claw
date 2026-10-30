@@ -105,19 +105,19 @@ describe("SecretRequestCard key analytics", () => {
   type Props = { children?: ReactNode; type?: string; onChange?: (event: { target: { value: string } }) => void; onSubmit?: (event: { preventDefault(): void }) => void };
   const nodes = (tree: ReactNode): Array<ReactElement<Props>> =>
     Children.toArray(tree).flatMap((child) => isValidElement<Props>(child) ? [child, ...nodes(child.props.children)] : []);
-  const card = (target: string) => {
+  const card = (target: string, extra: Record<string, unknown> = {}) => {
     fixture.counting = true;
     fixture.index = 0;
     try {
-      return nodes(SecretRequestCard({ botId: "bot-1", threadId: "thread-1", message: secretCard({ target, label: "Key" }) }));
+      return nodes(SecretRequestCard({ botId: "bot-1", threadId: "thread-1", message: secretCard({ target, label: "Key", ...extra }) }));
     } finally {
       fixture.counting = false;
     }
   };
   const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
-  async function submit(target: string, typed = KEY) {
-    card(target).find((node) => node.type === "input")!.props.onChange!({ target: { value: typed } });
-    card(target).find((node) => node.type === "form")!.props.onSubmit!({ preventDefault: () => {} });
+  async function submit(target: string, typed = KEY, extra: Record<string, unknown> = {}) {
+    card(target, extra).find((node) => node.type === "input")!.props.onChange!({ target: { value: typed } });
+    card(target, extra).find((node) => node.type === "form")!.props.onSubmit!({ preventDefault: () => {} });
     await flush();
   }
 

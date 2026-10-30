@@ -1,12 +1,13 @@
 import { useState, type FormEvent } from "react";
 import { ExternalLink, KeyRound, Loader2, LockKeyhole, RefreshCw, X } from "lucide-react";
 
-import { credentialResumeOutcome, credentialSaveRequest, isConfigCredentialTarget } from "../../shared/credential-request";
+import { CUSTOM_SECRET_TARGET, credentialResumeOutcome, credentialSaveRequest, isConfigCredentialTarget } from "../../shared/credential-request";
 import { credentialProvider } from "@/lib/analytics-allowlist";
 import { cn } from "@/lib/cn";
+import { t } from "@/lib/i18n";
 import { keySaved, keySaveFailure, savedKeyResult } from "@/lib/product-events";
-import { api, useStore, type Bot, type ConfigStatus, type Message } from "@/state/store";
-import { ASK_FIELD, askPrimary, ASK_QUIET_BUTTON, AskCard, AskSettledLine, returnFocusToComposer } from "./AskCard";
+import { api, useStore, type ConfigStatus, type Message } from "@/state/store";
+import { ASK_FIELD, ASK_PRIMARY_BUTTON, ASK_QUIET_BUTTON, AskCard, AskSettledLine, returnFocusToComposer } from "./AskCard";
 import { productName } from "@/lib/brand";
 
 // Security: the value goes straight to the host's settings, never into the chat.
@@ -34,6 +35,7 @@ export function SecretRequestCard({
   const declined = outcome === "dismissed";
   const superseded = secret.superseded === true;
   const stopped = secret.stopped === true;
+  const custom = secret.target === CUSTOM_SECRET_TARGET;
   const description = superseded
     ? "This request was replaced by a newer one for the same key. Use the newest card to provide it."
     : provided
@@ -92,10 +94,10 @@ export function SecretRequestCard({
         const next = value.trim();
         const target = secret.target;
         // The 1Password token goes to this server's Logins, which checks it with 1Password first, never the settings file.
-        const request = credentialSaveRequest(target, next);
-        if (isConfigCredentialTarget(target)) {
+        const request = credentialSaveRequest(target as any, next);
+        if (isConfigCredentialTarget(target as any)) {
           const status: ConfigStatus = window.ogb?.setCredential
-            ? await window.ogb.setCredential(target, next)
+            ? await window.ogb.setCredential(target as any, next)
             : await api(request.path, { method: request.method, body: JSON.stringify(request.body) });
           dispatch({ type: "configStatus", config: status });
         } else await api(request.path, { method: request.method, body: JSON.stringify(request.body) });

@@ -6823,5 +6823,11 @@
   "commandPalette.searchPlaceholder": "Search bots, group chats, messages…",
   "secretCard.ref": "{app} keeps it for one use by its own tools. Your bot never sees it, and it is never added to chat.",
   "secretCard.file": "Saved to a private file your bot's commands can read for 24 hours, then deleted. It is never added to chat.",
-  "secretCard.resumed": "Bot resumed"
+  "secretCard.resumed": "Bot resumed",
+  "keys.ollamaCloud.label": "Ollama Cloud API key",
+  "keys.ollamaCloud.desc": "For Ollama Cloud models, billed to your Ollama Cloud account.",
+  "keys.ollamaCloud.link": "Ollama Cloud API keys",
+  "keys.purpose.ollamaCloud": "Ollama Cloud models",
+  "settings.intelligence.title": "Intelligence",
+  "settings.intelligence.intro": "Intelligence settings"
 }

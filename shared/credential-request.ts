@@ -125,6 +125,10 @@ export function isPendingCredentialRequest(
   );
 }
 
+export const CUSTOM_SECRET_TARGET = "customSecret";
+export type SecretDelivery = "ref" | "file";
+export const SECRET_DELIVERIES: readonly SecretDelivery[] = ["ref", "file"];
+
 export function credentialResumeOutcome(state: {
   provided?: unknown;
   dismissed?: unknown;
