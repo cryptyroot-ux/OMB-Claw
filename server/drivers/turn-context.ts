@@ -7,6 +7,19 @@ import { prefixBytes } from "../context-rebuild.ts";
 import type { ChatToolDefinition } from "./chat-mcp-tools.ts";
 import type { OpenAIChatMessage } from "./openai-chat.ts";
 
+export function turnContextSettings(fromTurn: TurnContextSettings | undefined): TurnContextSettings {
+  const envNumber = (name: string) => {
+    const v = Number(process.env[name]);
+    return Number.isFinite(v) && v > 0 ? v : undefined;
+  };
+  return {
+    ...fromTurn,
+    compactAt: fromTurn?.compactAt ?? envNumber("OMB_TURN_COMPACT_AT"),
+    offloadBytes: fromTurn?.offloadBytes ?? envNumber("OMB_TOOL_OFFLOAD_BYTES"),
+    offloadDir: fromTurn?.offloadDir ?? (process.env.OMB_TOOL_OFFLOAD_DIR || undefined),
+  };
+}
+
 export interface TurnContextSettings {
   /** Fraction (<1) of the window, or absolute tokens, at which a turn compacts before the next model call. */
   compactAt?: number;

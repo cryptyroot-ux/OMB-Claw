@@ -196,6 +196,8 @@ export interface SendTurnInput {
   toolErrorCorrectiveRounds?: number;
   /** Extra workspace roots for native workspace tools. */
   workspaceTools?: { readRoots?: string[]; writeRoots?: string[]; unrestricted?: boolean };
+  /** Turn context settings for compaction and offload. */
+  turnContext?: { compactAt?: number; offloadBytes?: number; offloadDir?: string; summaryModel?: string; keepExchanges?: number };
 }
 
 /** An MCP server this machine starts and talks to over stdio. */
