@@ -20,7 +20,8 @@ import { promptHalves, volatileContextNote, withContextNote } from "../drivers/p
 import { createChatToolApproval, refusal } from "../drivers/chat-tool-approval.ts";
 import { ChatProtocolError, ChatReasoningDetails, ChatToolCalls, object, type ChatToolCall } from "../drivers/openai-chat-protocol.ts";
 import { appendNative } from "../drivers/native.ts";
-import { turnContextSettings, offloadToolOutput, readToolOutput, READ_TOOL_OUTPUT_TOOL, READ_TOOL_OUTPUT_DEFINITION } from "../drivers/turn-context.ts";
+import { contextWindowFor } from "../context-budget.ts";
+import { turnContextSettings, estimateRequestTokens, TokenCalibration, offloadToolOutput, readToolOutput, READ_TOOL_OUTPUT_TOOL, READ_TOOL_OUTPUT_DEFINITION, compactTurnMessages, turnCompactBudget, DEFAULT_KEEP_EXCHANGES } from "../drivers/turn-context.ts";
 import { classifyError, computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "../drivers/retry.ts";
 import { plainFailureMessage } from "../drivers/engine-errors.ts";
 import { refusesRequestSize, RequestTooLargeError, sizeChange, smallerResend } from "../drivers/chat-size-limit.ts";
@@ -653,6 +654,26 @@ export function createNativeTurnRuntime<Config>(options: RuntimeOptions<Config>)
         if (offloadOn && !tools.definitions.some((definition) => definition.function.name === READ_TOOL_OUTPUT_TOOL)) {
           tools.definitions.push(READ_TOOL_OUTPUT_DEFINITION);
         }
+        const window = contextWindowFor(model, options.models());
+        const budget = turnCompactBudget(window, ctx.compactAt);
+        const calibration = new TokenCalibration();
+        let compactions = 0;
+        const compact = async (reason: "budget" | "overflow", keepExchanges: number) => {
+          const summaryModel = ctx.summaryModel || model;
+          const result = await compactTurnMessages(messages, request, {
+            tools: tools!.definitions, keepExchanges,
+            summaryBudgetBytes: Math.max(4_000, Math.floor(window * 0.4 * 3.5)),
+            summarize: async (prompt) => {
+              const { text, reasoning } = await complete([{ role: "user", content: prompt }], summaryModel, false, abort.signal);
+              return text.trim() ? text : reasoning;
+            },
+          });
+          if (!result) return false;
+          messages.splice(0, messages.length, ...result.messages);
+          compactions++;
+          native("out", { compacted: reason, n: compactions, folded: result.folded, beforeTokens: result.beforeTokens, afterTokens: result.afterTokens, window, budget, summarizer: result.summarizer });
+          return true;
+        };
         // Native workspace tools: in-process, rooted at the turn's folder.
         const workspace: WorkspaceToolsConfig | undefined = options.tools !== false && turn.cwd && !turn.guestConfined ? {
           root: turn.cwd,
@@ -686,6 +707,12 @@ export function createNativeTurnRuntime<Config>(options: RuntimeOptions<Config>)
             // Between rounds, never inside a tool batch.
           const parked = turnEntry.asides.splice(0);
           if (parked.length) messages.push({ role: "user", content: parked.join("\n\n") });
+          // Request-size accounting before every model call; fold older steps when the turn nears its budget.
+          let target = budget;
+          for (let keep = ctx.keepExchanges ?? DEFAULT_KEEP_EXCHANGES; keep >= 1; keep = keep > 1 ? Math.floor(keep / 2) : 0) {
+            if (calibration.apply(estimateRequestTokens(messages, tools.definitions)) < target) break;
+            if (await compact("budget", keep)) target = Math.floor(budget * 0.6);
+          }
           native("out", options.nativeLog.outgoing(turn, messages, model, tools.definitions));
           let attempt = 0;
           let resized = false;
