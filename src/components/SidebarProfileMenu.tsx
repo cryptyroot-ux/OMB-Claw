@@ -34,6 +34,7 @@ import { useCloudPlanSnapshot } from "./CloudTrialNotice";
 import type { WorkspacePlace } from "./DesktopWorkspaceSwitcher";
 import { useAutomationsNeedYou } from "./SidebarFooterNav";
 import { useCloudFilesReady } from "@/lib/cloud-files";
+import { railShown, usePlaces } from "@/lib/places";
 import { SidebarPopoverMenu, type SidebarMenuItem } from "./SidebarPopoverMenu";
 import { ShortcutHint } from "./ShortcutHint";
 import { useSidebarPhoneStatus } from "./SidebarPhoneButton";
@@ -378,9 +379,10 @@ export function accountDot({ automationsNeedYou, update, move }: { automationsNe
   return update ? "accent" : null;
 }
 
-export function placeMenuItems(place: Pick<WorkspacePlace, "bridge" | "current" | "cloudHome" | "onLine" | "openMenu" | "switchable">, { owner, onCloudSettings }: {
+export function placeMenuItems(place: Pick<WorkspacePlace, "bridge" | "current" | "cloudHome" | "onLine" | "openMenu" | "switchable">, { owner, onCloudSettings, besideRail = false }: {
   owner: string | null;
   onCloudSettings: () => void;
+  besideRail?: boolean;
 }): SidebarMenuItem[] {
   const here = <Check size={15} aria-hidden="true" className="shrink-0 text-ink-secondary" />;
   if (!place.switchable) {
@@ -393,7 +395,7 @@ export function placeMenuItems(place: Pick<WorkspacePlace, "bridge" | "current" 
     : current?.local === false || (place.cloudHome && !current) ? <Cloud size={16} /> : <Laptop size={16} />;
   return [
     ...(current ? [{ key: "place", label: current.name, ...(place.cloudHome && place.onLine ? { subtitle: place.onLine } : {}), icon, trailing: here, onSelect: place.openMenu }] : []),
-    { key: "switch-place", label: t("sidebar.menu.switchTo"), icon: <ArrowLeftRight size={16} />, onSelect: place.openMenu },
+    ...(besideRail ? [] : [{ key: "switch-place", label: t("sidebar.menu.switchTo"), icon: <ArrowLeftRight size={16} />, onSelect: place.openMenu }]),
   ];
 }
 
@@ -584,6 +586,7 @@ export function SidebarProfileMenu({ iconOnly = false, rail = false, circle = fa
   const name = profileLabel(profile);
   const connectTo = (destination: PhoneDestination) => selectPhoneDestination(destination, { bridge: cloudPhone.bridge, dispatch });
   const remote = window.ogb?.remoteClient?.active === true;
+  const besideRail = railShown(usePlaces());
   const filesReady = useCloudFilesReady();
   const cloudAccount = !remote && Boolean(window.ogb?.cloudAccount || (window.ogb?.cloudPlan && state.config?.cloudHome === true));
   const openCloudAccount = () => dispatch({ type: "toggleAppSettings", open: true, section: "cloudAccount" });
