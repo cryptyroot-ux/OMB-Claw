@@ -20,6 +20,7 @@ import { promptHalves, volatileContextNote, withContextNote } from "../drivers/p
 import { createChatToolApproval, refusal } from "../drivers/chat-tool-approval.ts";
 import { ChatProtocolError, ChatReasoningDetails, ChatToolCalls, object, type ChatToolCall } from "../drivers/openai-chat-protocol.ts";
 import { appendNative } from "../drivers/native.ts";
+import { turnContextSettings, offloadToolOutput, readToolOutput, READ_TOOL_OUTPUT_TOOL, READ_TOOL_OUTPUT_DEFINITION } from "../drivers/turn-context.ts";
 import { classifyError, computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "../drivers/retry.ts";
 import { plainFailureMessage } from "../drivers/engine-errors.ts";
 import { refusesRequestSize, RequestTooLargeError, sizeChange, smallerResend } from "../drivers/chat-size-limit.ts";
@@ -525,6 +526,7 @@ export function createNativeTurnRuntime<Config>(options: RuntimeOptions<Config>)
     const retainImages = chatImageBudget();
     for (const message of messages) retainImages(message.content);
     const model = turn.model || options.models().default;
+    const ctx = turnContextSettings(turn.turnContext);
     const secrets = [options.apiKey].filter((value): value is string => Boolean(value));
     for (const integration of Object.values(turn.integrations ?? {})) {
       const entries = object(integration);
@@ -646,6 +648,10 @@ export function createNativeTurnRuntime<Config>(options: RuntimeOptions<Config>)
           toolSchemaProfileFor({ url: options.apiUrl, model }));
         for (const { server, reason } of tools.skipped) {
           emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message: `MCP server "${server}" was skipped for this turn: ${safeText(reason)}` });
+        }
+        const offloadOn = options.tools !== false && Boolean(ctx.offloadDir) && tools.definitions.length > 0;
+        if (offloadOn && !tools.definitions.some((definition) => definition.function.name === READ_TOOL_OUTPUT_TOOL)) {
+          tools.definitions.push(READ_TOOL_OUTPUT_DEFINITION);
         }
         // Native workspace tools: in-process, rooted at the turn's folder.
         const workspace: WorkspaceToolsConfig | undefined = options.tools !== false && turn.cwd && !turn.guestConfined ? {
@@ -850,6 +856,12 @@ export function createNativeTurnRuntime<Config>(options: RuntimeOptions<Config>)
                     result = { ok: true, text: answer };
                   }
                 }
+              } else if (offloadOn && call.function.name === READ_TOOL_OUTPUT_TOOL) {
+                emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id,
+                  title: call.function.name, ...(inputPreview ? { input: inputPreview } : {}),
+                });
+                started = true;
+                result = readToolOutput(args as Record<string, unknown>, { dir: ctx.offloadDir, threadId: turn.threadId });
               } else if (workspace && workspaceNames.has(call.function.name)) {
                 validateWorkspaceArgs(call.function.name, args as Record<string, unknown>);
                 const shown = workspaceToolView(call.function.name, args as Record<string, unknown>);
@@ -907,7 +919,11 @@ export function createNativeTurnRuntime<Config>(options: RuntimeOptions<Config>)
                 : safeText(asError(error).message).slice(0, 2_000) };
             }
             if (!started) emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id, title: call.function.name });
-            const text = safeText(result.text);
+            let text = safeText(result.text);
+            const offloaded = offloadOn && call.function.name !== READ_TOOL_OUTPUT_TOOL
+              ? offloadToolOutput(text, { dir: ctx.offloadDir, threadId: turn.threadId, callId: call.id, thresholdBytes: ctx.offloadBytes })
+              : null;
+            if (offloaded) text = offloaded.text;
             const output = preview({ ok: result.ok, result: text });
             emit({ ...base(turn.threadId, turnId), type: "item.completed", itemType: "tool", itemId: call.id, ok: result.ok, output });
             if (!result.ok) toolFailed = true;
