@@ -1,9 +1,6 @@
 // Native shell (Bash) tool for the OMB agent engine. Runs a command in the
 // workspace root with a timeout and captured output. No MCP server needed.
-import { exec } from "node:child_process";
-import { promisify } from "node:util";
-
-const execAsync = promisify(exec);
+import { spawn } from "node:child_process";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_TIMEOUT_MS = 600_000;
@@ -25,21 +22,22 @@ export interface ShellToolResult {
 }
 
 function stripControlPlaneEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const out: NodeJS.ProcessEnv = { ...env };
-  // Reuse the same deny list concept (provider keys, tokens).
-  for (const name of Object.keys(out)) {
-    if (/key|token|password|secret|authorization|credential/i.test(name)) delete out[name];
+  const out: NodeJS.ProcessEnv = {};
+  // Allowlist: only pass safe env vars, never credentials.
+  const SAFE = /^(PATH|HOME|PWD|USER|LANG|LC_|TERM|SHELL|TMPDIR|TMP|TEMP|NODE_|PYTHON|GOPATH|GOROOT|JAVA_HOME|CARGO|RUSTUP|NVM|NPM_CONFIG|XDG_|DISPLAY|COLORTERM|TERM_PROGRAM|SHLVL|_)$/i;
+  for (const [name, value] of Object.entries(env ?? {})) {
+    if (SAFE.test(name)) out[name] = value;
   }
   return out;
 }
 
-const WRITE_INDICATORS = /\b(rm|mv|cp|chmod|chown|mkdir|rmdir|touch|dd|tee|truncate|install|ln|rsync|scp)\b|[>]{1,2}/;
+const WRITE_INDICATORS = /\b(rm|mv|cp|chmod|chown|mkdir|rmdir|touch|dd|tee|truncate|install|ln|rsync|scp)\b|\b(python3?|node|perl|ruby|awk)\b.*-c\b|[>]{1,2}|\bsed\b.*-i\b|\bgit\b.*\b(checkout|reset|clean|push|commit|merge|rebase)\b|\b(vi|nano|vim)\b/;
 
 function isWriteCommand(command: string): boolean {
   return WRITE_INDICATORS.test(command);
 }
 
-export async function runShellTool(ctx: ShellToolContext, args: Record<string, unknown>): Promise<ShellToolResult> {
+export async function runShellTool(ctx: ShellToolContext, args: Record<string, unknown>, signal?: AbortSignal): Promise<ShellToolResult> {
   const command = String(args?.command ?? "").trim();
   if (!command) return { ok: false, content: "command is required", error: "command is required", exitCode: null, durationMs: 0 };
 
@@ -57,38 +55,66 @@ export async function runShellTool(ctx: ShellToolContext, args: Record<string, u
   env.HOME = process.env.HOME ?? ctx.root;
   env.PWD = ctx.root;
 
-  try {
-    const { stdout, stderr } = await execAsync(command, {
+  return new Promise<ShellToolResult>((resolve) => {
+    const controller = new AbortController();
+    const child = spawn("/bin/bash", ["-c", command], {
       cwd: ctx.root,
       env,
-      timeout,
-      maxBuffer: MAX_OUTPUT_BYTES,
-      shell: true,
-      windowsHide: true,
-    } as any);
-    const durationMs = Date.now() - start;
-    let output = "";
-    if (stdout) output += stdout;
-    if (stderr) output += (output ? "\n--- stderr ---\n" : "") + stderr;
-    if (output.length > MAX_OUTPUT_BYTES) output = output.slice(0, MAX_OUTPUT_BYTES) + TRUNCATE_NOTICE;
-    const header = description ? `[${description}]\n` : "";
-    const exitInfo = `exit code: 0 (${durationMs}ms)`;
-    return { ok: true, content: `${header}${output}\n${exitInfo}`.trim(), exitCode: 0, durationMs };
-  } catch (error: any) {
-    const durationMs = Date.now() - start;
-    const killed = error?.killed === true;
-    const stdout = typeof error?.stdout === "string" ? error.stdout : "";
-    const stderr = typeof error?.stderr === "string" ? error.stderr : "";
-    let output = "";
-    if (stdout) output += stdout;
-    if (stderr) output += (output ? "\n--- stderr ---\n" : "") + stderr;
-    if (output.length > MAX_OUTPUT_BYTES) output = output.slice(0, MAX_OUTPUT_BYTES) + TRUNCATE_NOTICE;
-    const exitCode = typeof error?.code === "number" ? error.code : null;
-    const reason = killed ? `timed out after ${timeout}ms` : (error?.message ?? "command failed");
-    const header = description ? `[${description}]\n` : "";
-    const exitInfo = killed ? `timed out (${durationMs}ms)` : `exit code: ${exitCode ?? "?"} (${durationMs}ms)`;
-    return { ok: !killed && exitCode === 0, content: `${header}${output}\n${exitInfo}\n${reason}`.trim(), error: reason, exitCode, durationMs };
-  }
+      stdio: ["ignore", "pipe", "pipe"],
+      signal: controller.signal,
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let killed = false;
+    let timedOut = false;
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeout);
+
+    // Wire external abort signal to controller
+    if (signal) {
+      if (signal.aborted) { controller.abort(); }
+      else { signal.addEventListener("abort", () => controller.abort(), { once: true }); }
+    }
+
+    child.stdout?.on("data", (data: Buffer) => {
+      stdout += data.toString();
+      if (stdout.length > MAX_OUTPUT_BYTES) stdout = stdout.slice(0, MAX_OUTPUT_BYTES);
+    });
+    child.stderr?.on("data", (data: Buffer) => {
+      stderr += data.toString();
+      if (stderr.length > MAX_OUTPUT_BYTES) stderr = stderr.slice(0, MAX_OUTPUT_BYTES);
+    });
+
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      const durationMs = Date.now() - start;
+      let output = stdout;
+      if (stderr) output += (output ? "\n--- stderr ---\n" : "") + stderr;
+      if (output.length > MAX_OUTPUT_BYTES) output = output.slice(0, MAX_OUTPUT_BYTES) + TRUNCATE_NOTICE;
+      const header = description ? `[${description}]\n` : "";
+      const exitCode = typeof code === "number" ? code : null;
+      const reason = timedOut ? `timed out after ${timeout}ms` : (killed ? "killed by abort signal" : (code !== 0 ? `exit code ${code}` : ""));
+      const exitInfo = timedOut ? `timed out (${durationMs}ms)` : `exit code: ${exitCode ?? "?"} (${durationMs}ms)`;
+      resolve({ ok: !timedOut && exitCode === 0, content: `${header}${output}\n${exitInfo}${reason ? `\n${reason}` : ""}`.trim(), error: reason || undefined, exitCode, durationMs });
+    });
+
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      const durationMs = Date.now() - start;
+      if (timedOut || err.name === "AbortError") {
+        killed = true;
+        const output = (stdout + (stderr ? "\n--- stderr ---\n" + stderr : "")).slice(0, MAX_OUTPUT_BYTES);
+        const reason = timedOut ? `timed out after ${timeout}ms` : "interrupted";
+        resolve({ ok: false, content: `${description ? `[${description}]\n` : ""}${output}\n${reason} (${durationMs}ms)`, error: reason, exitCode: null, durationMs });
+      } else {
+        resolve({ ok: false, content: `error: ${err.message}`, error: err.message, exitCode: null, durationMs });
+      }
+    });
+  });
 }
 
 export const SHELL_TOOL_DESCRIPTOR = {

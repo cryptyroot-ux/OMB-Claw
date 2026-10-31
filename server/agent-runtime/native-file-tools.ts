@@ -1,7 +1,7 @@
 // Native file tools for the OMB agent engine: Read, Edit, Write, Glob, Grep.
 // These are built-in capabilities (no MCP server needed) so OMB can do coding
 // tasks out of the box. Path-safe: all paths resolve inside a workspace root.
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 const READ_MAX_BYTES = 256 * 1024;
@@ -26,18 +26,19 @@ function safeResolve(root: string, input: string): string | null {
   const resolved = isAbsolute(input) ? resolve(input) : resolve(root, input);
   const rel = relative(root, resolved);
   if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return null;
-  // Symlink escape check
-  // Symlink escape: resolve real path and ensure within root.
+  // Symlink escape check: resolve real path and ensure within root.
   try {
-    if (existsSync(resolved)) {
-      const st = lstatSync(resolved);
-      if (st.isSymbolicLink()) {
-        // Resolve the link target and verify it stays inside root.
-        const linkTarget = readFileSync(resolved, "utf8"); // may throw for non-text; ignore
-        void linkTarget;
-      }
-    }
-  } catch {}
+    const real = realpathSync(resolved);
+    const realRel = relative(root, real);
+    if (realRel === ".." || realRel.startsWith(`..${sep}`) || isAbsolute(realRel)) return null;
+  } catch {
+    // File doesn't exist yet (new file) — check parent directory.
+    try {
+      const parentReal = realpathSync(resolve(resolved, ".."));
+      const parentRel = relative(root, parentReal);
+      if (parentRel === ".." || parentRel.startsWith(`..${sep}`) || isAbsolute(parentRel)) return null;
+    } catch {}
+  }
   return resolved;
 }
 

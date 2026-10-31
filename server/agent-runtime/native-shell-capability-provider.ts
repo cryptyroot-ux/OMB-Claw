@@ -43,7 +43,7 @@ export class NativeShellCapabilityProvider implements CapabilityProvider {
     try { this.validate(call, context.grant); }
     catch (error) { return { callId: call.callId, ok: false, content: error instanceof Error ? error.message : String(error), error: "denied" }; }
     context.signal.throwIfAborted();
-    const result = await runShellTool(this.ctx, (call.arguments ?? {}) as Record<string, unknown>);
+    const result = await runShellTool(this.ctx, (call.arguments ?? {}) as Record<string, unknown>, context.signal);
     return { callId: call.callId, ok: result.ok, content: result.content, ...(result.error ? { error: result.error } : {}) };
   }
 

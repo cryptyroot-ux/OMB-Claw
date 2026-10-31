@@ -1,8 +1,45 @@
 // Native web tools: fetch (HTTP GET) and search (DuckDuckGo HTML, no API key).
 import { URL } from "node:url";
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 
 const FETCH_MAX_BYTES = 100_000;
 const SEARCH_MAX_RESULTS = 10;
+
+function privateAddress(address: string): boolean {
+  const a = address.replace(/^\[|\]$/g, "");
+  if (isIP(a) === 4) {
+    const parts = a.split(".").map(Number);
+    if (parts[0] === 10) return true;
+    if (parts[0] === 127) return true;
+    if (parts[0] === 169 && parts[1] === 254) return true;
+    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+    if (parts[0] === 192 && parts[1] === 168) return true;
+    if (parts[0] === 0) return true;
+    if (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127) return true;
+    return false;
+  }
+  if (isIP(a) === 6) {
+    if (a === "::1") return true;
+    if (a.toLowerCase().startsWith("fe80")) return true;
+    if (a.toLowerCase().startsWith("fc") || a.toLowerCase().startsWith("fd")) return true;
+    return false;
+  }
+  return false;
+}
+
+async function isPrivateUrl(url: string): Promise<boolean> {
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { return true; }
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, "");
+  if (isIP(hostname)) return privateAddress(hostname);
+  try {
+    const addresses = await lookup(hostname, { all: true });
+    return addresses.some((a) => privateAddress(a.address));
+  } catch {
+    return true;
+  }
+}
 
 export interface WebToolContext {
   readonly root: string;
@@ -22,8 +59,16 @@ export async function runWebTool(_ctx: WebToolContext, args: Record<string, unkn
     let parsed: URL;
     try { parsed = new URL(url); } catch { return { ok: false, content: "", error: "invalid url" }; }
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return { ok: false, content: "", error: "only http/https allowed" };
+    if (await isPrivateUrl(url)) return { ok: false, content: "", error: "private or local addresses are not allowed" };
     try {
-      const res = await fetch(url, { headers: { "user-agent": "OMB-Native/1.0" }, signal: AbortSignal.timeout(30_000) });
+      const res = await fetch(url, { headers: { "user-agent": "OMB-Native/1.0" }, signal: AbortSignal.timeout(30_000), redirect: "manual" });
+      if (res.status >= 300 && res.status < 400) {
+        const loc = res.headers.get("location");
+        if (loc) {
+          const redirectUrl = new URL(loc, url).href;
+          if (await isPrivateUrl(redirectUrl)) return { ok: false, content: "", error: "redirect to private address blocked" };
+        }
+      }
       if (!res.ok) return { ok: false, content: "", error: `HTTP ${res.status}` };
       const text = await res.text();
       const clipped = text.length > FETCH_MAX_BYTES ? text.slice(0, FETCH_MAX_BYTES) + "\n[truncated]" : text;
