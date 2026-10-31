@@ -22,9 +22,10 @@ import { ChatProtocolError, ChatReasoningDetails, ChatToolCalls, object, type Ch
 import { appendNative } from "../drivers/native.ts";
 import { contextWindowFor } from "../context-budget.ts";
 import { turnContextSettings, estimateRequestTokens, TokenCalibration, offloadToolOutput, readToolOutput, READ_TOOL_OUTPUT_TOOL, READ_TOOL_OUTPUT_DEFINITION, compactTurnMessages, turnCompactBudget, DEFAULT_KEEP_EXCHANGES } from "../drivers/turn-context.ts";
-import { classifyError, computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "../drivers/retry.ts";
+import { classifyError, HttpStatusError, interruptibleDelay, nextRetryDelay, parseRetryAfter, RETRY_MAX_ATTEMPTS } from "../drivers/retry.ts";
 import { plainFailureMessage } from "../drivers/engine-errors.ts";
 import { refusesRequestSize, RequestTooLargeError, sizeChange, smallerResend } from "../drivers/chat-size-limit.ts";
+import { refusesContextLength } from "../drivers/turn-context.ts";
 import { requestTooLargeMessage } from "../../shared/request-too-large.ts";
 import { toolSchemaProfileFor } from "../tool-schema-profile.ts";
 import { classifyContinuable, writeTurnHandoff } from "../turn-continuation.ts";
@@ -336,14 +337,14 @@ export function createNativeTurnRuntime<Config>(options: RuntimeOptions<Config>)
         const body = await response.text().catch(() => "");
         if (rejectsKey(response.status, body)) noteKeyRejected(options.apiUrl, options.apiKey);
         const message = `${options.httpErrorLabel} HTTP ${response.status}${body ? `: ${httpErrorDetail(body)}` : ""}`;
-        if (refusesRequestSize(response.status, body)) throw new RequestTooLargeError(message, Buffer.byteLength(payload));
+        if (refusesRequestSize(response.status, body) || refusesContextLength(response.status, body)) throw new RequestTooLargeError(message, Buffer.byteLength(payload));
         if (rejectsToolsParameter(response.status, body)) throw new UnsupportedChatToolsError(message);
         const refusal = refusedToolCall(response.status, body);
         if (refusal) throw new RejectedToolCallError(message, refusal);
         if (messages.some((entry) => entry.reasoning_content !== undefined) && rejectsReasoningReplay(response.status, body)) {
           throw new UnsupportedReasoningReplayError(message);
         }
-        throw new Error(message);
+        throw new HttpStatusError(message, response.status, parseRetryAfter(response.headers.get("retry-after")));
       }
       noteKeyAccepted(options.apiUrl, options.apiKey);
 
@@ -715,6 +716,7 @@ export function createNativeTurnRuntime<Config>(options: RuntimeOptions<Config>)
           }
           native("out", options.nativeLog.outgoing(turn, messages, model, tools.definitions));
           let attempt = 0;
+          let retryWaitedMs = 0;
           let resized = false;
           let completion: Completion;
           for (;;) {
@@ -781,12 +783,16 @@ export function createNativeTurnRuntime<Config>(options: RuntimeOptions<Config>)
                 tools.definitions.length = 0;
                 continue;
               }
+              const retryScale = options.retryScale ?? Number(process.env.OMB_RETRY_SCALE ?? "1");
               // Once a call has been handled, never replay it through a turn retry.
-              if (options.retryScale === undefined || abort.signal.aborted || streamed || seenCalls.size ||
-                  error instanceof ChatProtocolError || !verdict.transient || attempt >= RETRY_MAX_ATTEMPTS - 1) throw error;
-              const delayMs = computeBackoff(attempt++);
+              if (abort.signal.aborted || streamed || seenCalls.size ||
+                  error instanceof ChatProtocolError || !verdict.transient) throw error;
+              const delayMs = nextRetryDelay(attempt, retryWaitedMs, error instanceof HttpStatusError ? error.retryAfterMs : undefined);
+              if (delayMs === null) throw error;
+              attempt++;
+              retryWaitedMs += delayMs;
               emit({ ...base(turn.threadId, turnId), type: "turn.retrying", attempt, delayMs, reason: verdict.reason });
-              await interruptibleDelay(delayMs * options.retryScale, abort.signal).promise;
+              await interruptibleDelay(delayMs * retryScale, abort.signal).promise;
               abort.signal.throwIfAborted();
             }
           }
